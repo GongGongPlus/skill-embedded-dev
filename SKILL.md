@@ -1,8 +1,7 @@
 ---
 name: embedded-dev
 description: "嵌入式/固件开发全流程专家：单片机 MCU 固件、STM32/ESP32/nRF/裸机、FreeRTOS/Zephyr、外设驱动（UART/I2C/SPI/CAN/ADC/DMA）、HardFault 死机复位排查、RTOS 并发与栈、bootloader/OTA、内存与链接优化、真机烧录验证。当用户做嵌入式开发、写驱动、调外设、排查死机、或提到 MCU/固件/开发板/单片机/示波器/逻辑分析仪/烧录时使用。Use when developing MCU firmware, drivers, debugging HardFault, RTOS issues, or flashing real hardware."
-metadata:
-  agent_created: true
+agent_created: true
 ---
 
 # 嵌入式开发（embedded-dev）
@@ -53,6 +52,7 @@ NOT：
 | 外设不工作：串口乱码、I2C/SPI 无响应、ADC 异常、DMA 丢数据 | "串口全是乱码" "传感器读不到" | [peripheral-bringup.md](references/peripheral-bringup.md) — bring-up 六步、各外设坑、症状速查 |
 | RTOS 任务崩溃、随机死机、优先级/队列问题 | "越跑越慢/越跑越死" "偶尔死机" | [rtos-concurrency.md](references/rtos-concurrency.md) — 栈溢出三重检测、环形缓冲、优先级 |
 | 启动失败、向量表、链接/内存优化、bootloader/OTA | "烧完就没反应/变砖" "升级完开不了机" | [memory-boot.md](references/memory-boot.md) — 向量表征验、map 文件、跳转漏洞、OTA 矩阵 |
+| 烧录/交付前确认"上电即跑"；任务创建失败死锁；功能静默不执行 | "能跑吗/上电直接能用？" "跑着跑着全卡住" "自动功能没反应" | [power-on-checklist.md](references/power-on-checklist.md) — 七维自检、堆余量铁律、重复符号、数据源有效位 |
 | STM32/ESP32/nRF/嵌入式 Linux 平台特定坑 | "Wi-Fi 老掉线" "HAL 时基不对" | [platforms.md](references/platforms.md) — CubeMX/ESP-IDF/nRF/Zephyr 注意事项 |
 
 外部按需查询：厂商手册细节（寄存器位段、errata）不内置，可定向检索 ima 知识库「STM32开发资料」「裸机思维」「嵌入式软件开发」，仅取实战结论，手册参数仍以官方 datasheet 为准。
@@ -60,4 +60,3 @@ NOT：
 ## 完成报告格式
 
 收尾必须包含：改动的文件与版本；路由与依据；执行的命令与测试结果；每个关键结论的证据等级；跳过的检查及原因；遗留风险；一个具体的下一步。
-
