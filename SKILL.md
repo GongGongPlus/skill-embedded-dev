@@ -19,13 +19,15 @@ agent_created: true
 
 ## 工具层与证据契约（可执行优先，不只给命令）
 
-`scripts/embedded_dev.py` 把构建、烧录、串口、寄存器读回和故障解码固化为可执行命令，统一退出码：`0` 正常、`1` 工具错误、`2` 构建失败、`3` 检测到故障、`4` 设备/测试失败、`5` 超时、`6` 配置错误（缺工具或缺必填参数）。
+`scripts/embedded_dev.py` 把构建、烧录、串口、寄存器读回、故障解码、协议解析和 HIL 验证固化为可执行命令，统一退出码：`0` 成功、`1` 构建失败、`2` 烧录失败、`3` 检测到硬件故障、`4` 测试/串口/超时失败、`5` 停滞（同一失败签名且源码未变）、`6` 配置错误（缺工具、缺必填参数或多个候选不猜）。
 
 - 先 `env --json` 查清真实工具链、探针与串口，再决定路径；环境不明不猜。
 - 所有写硬件的命令先 `--dry-run`，确认命令行后再执行。
 - 烧录后端必须显式给出识别参数（`--openocd-interface`+`--openocd-target`、`--chip`+`--port`、`--target`、`--jlink-device` 等）；存在多探针/多后端歧义时脚本返回候选列表并退出 6，不自动选。
-- 真机验证顺序 `build → flash → monitor --expect <token>`；未捕获令牌即失败（退出 4）。
-- 故障先 `fault` / `regs` 解码 CFSR/HFSR/BFAR 与栈帧，再谈复位；完成报告用 `report --file` 校验证据分级与命令记录，不合格即拒绝。
+- 真机验证顺序 `build → flash → monitor --expect <token>`；未捕获令牌即失败（退出 4）。`hil` 把这条链路一次跑完，并写 `diagnostic_report.json`（含失败签名、next_actions、ai_repair_prompt、repeated_failure、source_unchanged）；同一失败重复出现且源码未变时报 `STALLED`（退出 5）。
+- 故障先 `fault` / `regs` 解码 CFSR/HFSR/BFAR 与栈帧；带 `--elf` 时用 addr2line 把 PC/LR 解析到函数/行号（DWARF 门禁，缺工具即报配置错误），再谈复位。完成报告用 `report --file` 校验证据分级与命令记录，不合格即拒绝。
+- 串口/CAN 帧解析用 `decode`：先 `decode validate --spec` 验证 `embedded-protocol.v1` 规范，再解 UART 抓包或 candump 日志（ISO-TP 重组、UDS/NRC、OBD-II PID、J1939 PGN）；规范没写的位段保持 unknown，不猜。
+- 需要把工具暴露给其他 agent 运行时（Claude Code、Codex、DSH 等）时，用 `scripts/mcp_server.py` 的 stdio MCP 服务，不自造第二套命令。
 - 多平台安装：`python scripts/install.py --list` 查看 DSH/Codex/Claude Code 等 skill 根目录，`--target dsh` 一键安装并校验。
 
 ## 铁律
@@ -70,6 +72,7 @@ NOT：
 | RISC-V 芯片（ESP32-C3/C6、GD32VF103、CH32V003 等）死机/异常 | "RISC-V 上跑飞了" | [riscv.md](references/riscv.md) — CSR 模型、mcause/mtval 映射、trap 现场抓取 |
 | Zephyr 构建/设备树/Kconfig，或嵌入式 Linux 外设不工作 | "west 烧不进去" "i2cdetect 看不到" | [zephyr-linux.md](references/zephyr-linux.md) — west/DT/Kconfig 工作流、Linux 外设分层排查 |
 | BLE/Wi-Fi/LoRa/2.4G 连不上、掉线、距离短、功耗高 | "蓝牙搜不到" "Wi-Fi 老掉线" | [wireless.md](references/wireless.md) — 无线五步分诊、配参与抓包、天线与共存 |
+| 串口/CAN 帧解析不了、CRC 对不上、UDS/OBD-II 读不出 | "这帧怎么解" "诊断仪读不到" | [protocols.md](references/protocols.md) — serial_protocol.v1 规范、切帧与校验、ISO-TP/UDS/OBD-II/J1939 |
 
 外部查询边界：厂商手册细节（寄存器位段、errata）不内置；需要时以官方 datasheet / reference manual / errata 为唯一依据，工具输出与第三方资料只能作为线索，不得作为参数来源。
 
@@ -77,4 +80,4 @@ NOT：
 
 收尾必须包含：改动的文件与版本；路由与依据；执行的命令与测试结果；每个关键结论的证据等级；跳过的检查及原因；遗留风险；一个具体的下一步。
 
-可运行示例与现场案例见 [examples/stm32-openocd/README.md](examples/stm32-openocd/README.md) 与 [examples/cases/01-hardfault-bfar.md](examples/cases/01-hardfault-bfar.md)。
+可运行示例与现场案例见 [examples/stm32-openocd/README.md](examples/stm32-openocd/README.md)、[examples/protocols/README.md](examples/protocols/README.md) 与 [examples/cases/01-hardfault-bfar.md](examples/cases/01-hardfault-bfar.md)。

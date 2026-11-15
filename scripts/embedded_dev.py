@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""embedded-dev tool layer: build / flash / monitor / regs / fault decode.
+"""embedded-dev tool layer: build / flash / monitor / regs / fault / decode / hil.
 
 Design rules (see SKILL.md "Tool layer and evidence contract"):
 - Never guess a probe, toolchain, target or address. If a choice is ambiguous,
@@ -23,6 +23,7 @@ Exit-code contract:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -30,6 +31,8 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 EXIT_OK = 0
@@ -42,7 +45,7 @@ EXIT_CONFIG = 6
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
-VERSION_FALLBACK = "0.4.0"
+VERSION_FALLBACK = "0.5.0"
 
 
 def read_version() -> str:
@@ -486,6 +489,35 @@ def scan_token(data: bytes, token: str | None) -> bool:
     return token.encode("utf-8", errors="replace") in data
 
 
+# ---------------------------------------------------------------------------
+# ELF symbol resolution (DWARF gate)
+# ---------------------------------------------------------------------------
+
+def resolve_addresses(elf: str | None, addresses: dict[str, int | None]) -> tuple[dict, str | None]:
+    """Resolve addresses with addr2line. Missing tool/ELF is a config error, never a guess."""
+    if not elf:
+        return {}, None
+    if not Path(elf).is_file():
+        return {}, f"ELF file not found: {elf}"
+    tool = find_tool(ENV_TOOLS["addr2line"])
+    if tool is None:
+        return {}, "addr2line not found (DWARF gate): install arm-none-eabi-binutils (or binutils for host ELFs)"
+    keys = [key for key, value in addresses.items() if value is not None]
+    if not keys:
+        return {}, None
+    command = [tool, "-f", "-C", "-e", str(elf), *[f"0x{addresses[key]:08x}" for key in keys]]
+    proc = subprocess.run(command, capture_output=True, text=True, encoding="utf-8")
+    lines = [line.strip() for line in proc.stdout.splitlines()]
+    symbols: dict = {}
+    for index, key in enumerate(keys):
+        function = lines[2 * index] if 2 * index < len(lines) else "??"
+        location = lines[2 * index + 1] if 2 * index + 1 < len(lines) else "??:0"
+        symbols[key] = {"address": f"0x{addresses[key]:08x}", "function": function, "location": location}
+    if proc.returncode != 0 and not symbols:
+        return {}, (proc.stderr or "addr2line failed").strip()
+    return symbols, None
+
+
 def serial_ports() -> list[dict]:
     try:
         from serial.tools import list_ports  # type: ignore
@@ -557,8 +589,126 @@ def validate_report(data: object) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# CLI commands
+# Hardware-in-the-loop diagnostic report (build -> flash -> monitor -> diagnose)
 # ---------------------------------------------------------------------------
+
+DIAGNOSTIC_REQUIRED = [
+    "schema_version",
+    "timestamp",
+    "iteration",
+    "project",
+    "status",
+    "summary",
+    "signature",
+    "next_actions",
+    "ai_repair_prompt",
+    "repeated_failure",
+    "source_unchanged",
+]
+
+DIAGNOSTIC_STATUSES = [
+    "TEST_PASSED",
+    "BUILD_FAILED",
+    "FLASH_FAILED",
+    "HARD_FAULT",
+    "ASSERTION_FAILED",
+    "TEST_FAILED",
+    "TIMEOUT",
+    "SERIAL_UNAVAILABLE",
+    "STALLED",
+]
+
+COMPILER_ERROR_RE = re.compile(
+    r"(?P<file>[^\s:][^:\n]*?):(?P<line>\d+)(?::\d+)?:\s*(?P<severity>error|fatal error|warning):\s*(?P<message>.+)"
+)
+FAULT_MARKERS = ("hardfault", "hard fault", "cfsr", "fault handler", "*** fault", "assert failed", "assertion failed")
+
+
+def parse_compiler_errors(text: str, limit: int = 20) -> list[dict]:
+    errors: list[dict] = []
+    for match in COMPILER_ERROR_RE.finditer(text or ""):
+        errors.append(
+            {
+                "file": match.group("file"),
+                "line": int(match.group("line")),
+                "severity": match.group("severity"),
+                "message": match.group("message").strip(),
+            }
+        )
+        if len(errors) >= limit:
+            break
+    return errors
+
+
+def git_source_state(project: str | Path) -> dict:
+    """Report repository/dirty state so a failure can be tied to a source revision."""
+    state: dict = {"git": False, "clean": None, "porcelain": [], "head": None}
+    if shutil.which("git") is None:
+        state["note"] = "git not installed"
+        return state
+    try:
+        inside = subprocess.run(["git", "-C", str(project), "rev-parse", "--is-inside-work-tree"], capture_output=True, text=True, timeout=5)
+        if inside.returncode != 0 or inside.stdout.strip() != "true":
+            state["note"] = "project is not a git work tree"
+            return state
+        state["git"] = True
+        head = subprocess.run(["git", "-C", str(project), "rev-parse", "--short", "HEAD"], capture_output=True, text=True, timeout=5)
+        state["head"] = head.stdout.strip() or None
+        status = subprocess.run(["git", "-C", str(project), "status", "--porcelain"], capture_output=True, text=True, timeout=10)
+        changed = [line for line in status.stdout.splitlines() if line.strip()]
+        state["porcelain"] = changed
+        state["clean"] = not changed
+    except (OSError, subprocess.SubprocessError) as exc:
+        state["note"] = f"git probe failed: {exc}"
+    return state
+
+
+def create_restore_point(project: str | Path) -> str | None:
+    """Record a stash commit for a dirty tree without touching the work tree (git 2.13+)."""
+    if not git_source_state(project)["git"]:
+        return None
+    try:
+        proc = subprocess.run(["git", "-C", str(project), "stash", "create"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return proc.stdout.strip() or None
+
+
+def failure_signature(status: str, fault: dict | None, serial_text: str) -> str:
+    names = []
+    if fault:
+        names = sorted(hit["name"] for hit in fault.get("cfsr_bits", []) + fault.get("hfsr_bits", []))
+    tail = " ".join((serial_text or "").split()).lower()[-1500:]
+    payload = "|".join([status, ",".join(names), tail])
+    return hashlib.sha256(payload.encode("utf-8", errors="replace")).hexdigest()[:16]
+
+
+def build_repair_prompt(report: dict) -> str:
+    lines = [
+        f"Target status: {report['status']}.",
+        f"Project: {report['project']}  iteration: {report['iteration']}  signature: {report['signature']}.",
+    ]
+    fault = report.get("fault_diagnostics")
+    if fault:
+        bits = [hit["name"] for hit in fault.get("cfsr_bits", []) + fault.get("hfsr_bits", [])]
+        lines.append("Fault bits: " + (", ".join(bits) if bits else "none decoded") + ".")
+    if report.get("compiler_errors"):
+        first = report["compiler_errors"][0]
+        lines.append(f"First compiler error: {first['file']}:{first['line']}: {first['message']}")
+    if report.get("repeated_failure"):
+        lines.append("This is the same failure signature as the previous run: do not repeat the same patch.")
+    if report.get("source_unchanged"):
+        lines.append("The source tree is unchanged since the last attempt: change the hypothesis or collect new evidence first.")
+    lines.append("Next actions:")
+    for action in report.get("next_actions", []):
+        lines.append(f"- {action}")
+    lines.append("Rules: one variable at a time; verify on real hardware with a token; label every claim with an evidence level.")
+    return "\n".join(lines)
+
+
+def write_diagnostic_report(report: dict, path: str | Path) -> None:
+    Path(path).write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+
 
 def emit(data: object, as_json: bool) -> None:
     if as_json:
@@ -721,12 +871,12 @@ def cmd_monitor(args: argparse.Namespace) -> int:
     except Exception as exc:
         print(f"cannot open {args.port}: {exc}", file=sys.stderr)
         return EXIT_DEVICE
-    deadline = __import__("time").monotonic() + args.timeout
+    deadline = time.monotonic() + args.timeout
     chunks = []
     try:
         if args.send:
             port.write(args.send.encode("utf-8") + b"\r\n")
-        while __import__("time").monotonic() < deadline:
+        while time.monotonic() < deadline:
             chunk = port.read(256)
             if chunk:
                 chunks.append(chunk)
@@ -774,6 +924,12 @@ def cmd_regs(args: argparse.Namespace) -> int:
         psp=values.get("psp"),
         msp=values.get("msp"),
     )
+    symbols, symbol_error = resolve_addresses(getattr(args, "elf", None), {"pc": values.get("pc"), "lr": values.get("lr")})
+    if symbol_error:
+        print(symbol_error, file=sys.stderr)
+        return EXIT_CONFIG
+    if symbols:
+        result["symbols"] = symbols
     if args.json:
         emit(result, True)
     else:
@@ -792,10 +948,20 @@ def cmd_fault(args: argparse.Namespace) -> int:
         psp=parse_hex(args.psp),
         msp=parse_hex(args.msp),
     )
+    symbols, symbol_error = resolve_addresses(getattr(args, "elf", None), {"pc": result["pc"], "lr": result["lr"]})
+    if symbol_error:
+        print(symbol_error, file=sys.stderr)
+        return EXIT_CONFIG
+    if symbols:
+        result["symbols"] = symbols
+        for key, info in symbols.items():
+            result["next_steps"].append(f"Resolved {key.upper()} with DWARF: {info['function']} at {info['location']}.")
     if args.json:
         emit(result, True)
     else:
         print(format_fault(result))
+        for key, info in symbols.items():
+            print(f"{key.upper()} -> {info['function']} {info['location']}")
     return EXIT_FAULT if (result["cfsr_bits"] or result["hfsr_bits"]) else EXIT_OK
 
 
@@ -836,10 +1002,281 @@ def cmd_report(args: argparse.Namespace) -> int:
     return EXIT_OK if not errors else EXIT_CONFIG
 
 
+def _print_decode_summary(result: dict) -> None:
+    summary = result.get("summary") or {}
+    if result.get("kind") == "uart" or result.get("transport") == "uart":
+        print(
+            "uart frames={frames} checksum_failures={checksum_failures} frames_with_errors={frames_with_errors} decode_errors={decode_errors}".format(
+                frames=summary.get("frames", 0),
+                checksum_failures=summary.get("checksum_failures", 0),
+                frames_with_errors=summary.get("frames_with_errors", 0),
+                decode_errors=summary.get("decode_errors", 0),
+            )
+        )
+        for frame in result.get("frames", [])[:10]:
+            body = ", ".join(f"{name}={value}" for name, value in (frame.get("fields") or {}).items())
+            print(f"  offset={frame.get('offset')} {frame.get('direction') or frame.get('command') or ''} len={frame.get('length')} checksum_ok={(frame.get('checksum') or {}).get('ok')} {body}")
+    else:
+        print(
+            "can frames={can_frames} isotp_messages={isotp_messages} uds={uds} obd2={obd2} j1939={j1939} parse_errors={parse_errors}".format(
+                can_frames=summary.get("can_frames", 0),
+                isotp_messages=summary.get("isotp_messages", 0),
+                uds=summary.get("uds", 0),
+                obd2=summary.get("obd2", 0),
+                j1939=summary.get("j1939", 0),
+                parse_errors=summary.get("parse_errors", 0),
+            )
+        )
+        for message in result.get("messages", [])[:20]:
+            decoded = message.get("decoded") or {}
+            print(f"  {message.get('id_hex')} -> {decoded.get('protocol') or 'raw/unknown'}: {decoded}")
+    for error in result.get("errors", [])[:10]:
+        print(f"  decode error: {error}")
+
+
+def cmd_decode(args: argparse.Namespace) -> int:
+    sys.path.insert(0, str(SCRIPT_DIR))
+    try:
+        import protocol_decode as proto  # noqa: PLC0415 - sibling script, stdlib-only import
+    except Exception as exc:  # pragma: no cover - only if the file is missing
+        print(f"protocol_decode.py is unavailable: {exc}", file=sys.stderr)
+        return EXIT_CONFIG
+    try:
+        spec = proto.load_spec(args.spec)
+    except (OSError, ValueError) as exc:
+        print(f"cannot load protocol spec: {exc}", file=sys.stderr)
+        return EXIT_CONFIG
+    spec_errors = proto.validate_spec(spec)
+    if args.kind == "validate":
+        emit({"valid": not spec_errors, "errors": spec_errors}, args.json)
+        return EXIT_OK if not spec_errors else EXIT_CONFIG
+    if spec_errors:
+        emit({"valid": False, "errors": spec_errors}, args.json)
+        return EXIT_CONFIG
+    try:
+        if args.kind == "uart":
+            data = proto._read_input(args.hex, args.file, args.format)
+            result = proto.decode_uart_stream(spec, data)
+            has_errors = bool(result["summary"]["decode_errors"] or result["summary"]["checksum_failures"])
+        else:
+            if args.log:
+                text = Path(args.log).read_text(encoding="utf-8", errors="replace")
+            elif args.file:
+                text = Path(args.file).read_text(encoding="utf-8", errors="replace")
+            elif args.hex:
+                text = args.hex
+            else:
+                raise ValueError("decode can needs --log, --file or --hex candump lines")
+            result = proto.decode_can_log(text)
+            has_errors = bool(result["errors"])
+    except (OSError, ValueError) as exc:
+        print(f"decode failed: {exc}", file=sys.stderr)
+        return EXIT_CONFIG
+    if args.json:
+        emit(result, True)
+    else:
+        _print_decode_summary(result)
+    return EXIT_DEVICE if (args.strict and has_errors) else EXIT_OK
+
+
+HIL_STATUS_EXIT = {
+    "TEST_PASSED": EXIT_OK,
+    "BUILD_FAILED": EXIT_BUILD,
+    "FLASH_FAILED": EXIT_FLASH,
+    "HARD_FAULT": EXIT_FAULT,
+    "ASSERTION_FAILED": EXIT_FAULT,
+    "TEST_FAILED": EXIT_DEVICE,
+    "TIMEOUT": EXIT_DEVICE,
+    "SERIAL_UNAVAILABLE": EXIT_DEVICE,
+    "STALLED": EXIT_STALLED,
+}
+
+HIL_NEXT_ACTIONS = {
+    "BUILD_FAILED": ["Fix the first compiler error in compiler_errors; rerun with --iteration <n+1> after the edit."],
+    "FLASH_FAILED": ["Check board power and probe wiring, then confirm the image matches the chip before retrying."],
+    "HARD_FAULT": ["Decode CFSR/HFSR with the fault subcommand, resolve PC/LR with --elf, then fix the first root cause."],
+    "ASSERTION_FAILED": ["Inspect the assertion message and its source context; verify the invariant instead of weakening the test."],
+    "TEST_FAILED": ["Compare the captured bytes with the expected token; check the observation point (UART wiring, baud, flow control)."],
+    "TIMEOUT": ["Confirm the firmware runs (heartbeat/LED), then check the token is emitted after the correct step; widen --timeout only as a last resort."],
+    "SERIAL_UNAVAILABLE": ["Close other serial monitors, verify port/baud, or pass --mock-file to validate the pipeline without hardware."],
+    "STALLED": ["Same signature and unchanged source: change the hypothesis or collect new evidence before editing code again."],
+    "TEST_PASSED": ["Attach the token and raw log to the completion report; raise the evidence level to 已确认."],
+}
+
+
+def _hil_capture(args: argparse.Namespace) -> tuple[bytes, str]:
+    if args.mock_file:
+        return Path(args.mock_file).read_bytes(), "mock_file"
+    try:
+        import serial  # type: ignore  # noqa: PLC0415
+    except Exception as exc:  # pragma: no cover - environment dependent
+        raise RuntimeError("pyserial is required for hil; install it with: pip install pyserial") from exc
+    try:
+        port = serial.Serial(args.port, args.baud, timeout=0.2)
+    except Exception as exc:
+        raise RuntimeError(f"cannot open {args.port}: {exc}") from exc
+    chunks: list[bytes] = []
+    deadline = time.monotonic() + args.timeout
+    try:
+        while time.monotonic() < deadline:
+            chunk = port.read(256)
+            if chunk:
+                chunks.append(chunk)
+                if scan_token(b"".join(chunks), args.expect):
+                    break
+    finally:
+        port.close()
+    return b"".join(chunks), "serial"
+
+
+def cmd_hil(args: argparse.Namespace) -> int:
+    project = Path(args.project)
+    if not project.is_dir():
+        print(f"project not found: {project}", file=sys.stderr)
+        return EXIT_CONFIG
+    if not args.image:
+        print("hil requires --image <elf-or-bin>: the flash step must know what to write", file=sys.stderr)
+        return EXIT_CONFIG
+    if not args.dry_run and not args.expect:
+        print("hil requires --expect <token>: a hardware test without an observable pass token is a guess", file=sys.stderr)
+        return EXIT_CONFIG
+    build_backend, flash_backend = args.build_backend, args.flash_backend
+    if args.dry_run:
+        # A plan is allowed without installed tools; a real run is not.
+        if build_backend == "auto":
+            build_backend, _ = select_backend("auto", BUILD_BACKENDS)
+        if flash_backend == "auto":
+            flash_backend, _ = select_backend("auto", FLASH_BACKENDS)
+        if build_backend is None or flash_backend is None:
+            print("hil dry-run needs --build-backend/--flash-backend when no tools are detected", file=sys.stderr)
+            return EXIT_CONFIG
+    else:
+        build_backend, build_candidates = select_backend(args.build_backend, BUILD_BACKENDS)
+        if build_backend is None:
+            print(f"no unambiguous build backend (requested={args.build_backend}, available={build_candidates}); pass --build-backend", file=sys.stderr)
+            return EXIT_CONFIG
+        flash_backend, flash_candidates = select_backend(args.flash_backend, FLASH_BACKENDS)
+        if flash_backend is None:
+            print(f"no unambiguous flash backend (requested={args.flash_backend}, available={flash_candidates}); pass --flash-backend", file=sys.stderr)
+            return EXIT_CONFIG
+    try:
+        build_steps = build_commands(build_backend, str(project), args.build_dir, args.target, args.platformio_env)
+        flash_steps, flash_extras = flash_commands(
+            flash_backend,
+            args.image,
+            chip=args.chip,
+            target=args.target,
+            port=args.port,
+            baud=args.baud,
+            probe=args.probe,
+            openocd_interface=args.openocd_interface,
+            openocd_target=args.openocd_target,
+            jlink_device=args.jlink_device,
+            snr=args.snr,
+            project=str(project),
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return EXIT_CONFIG
+    if args.dry_run:
+        print("hil dry-run plan")
+        print("build:")
+        print(commands_to_text(build_steps))
+        print("flash:")
+        print(commands_to_text(flash_steps))
+        return EXIT_OK
+
+    iteration = args.iteration
+    report_out = args.report_out
+    git_state = git_source_state(project)
+    restore_point = create_restore_point(project) if args.restore_point else None
+    previous: dict | None = None
+    if args.previous:
+        try:
+            previous = json.loads(Path(args.previous).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"cannot read --previous report: {exc}", file=sys.stderr)
+            return EXIT_CONFIG
+
+    def finish(status: str, compiler_errors: list[dict] | None = None, serial_text: str = "", fault: dict | None = None) -> int:
+        exit_code = HIL_STATUS_EXIT.get(status, EXIT_DEVICE)
+        if status in ("HARD_FAULT",) and not fault:
+            fault = decode_fault(cfsr=parse_hex(args.cfsr) or 0, hfsr=parse_hex(args.hfsr) or 0)
+        signature = failure_signature(status, fault, serial_text)
+        repeated = bool(previous and previous.get("signature") == signature)
+        source_unchanged = False
+        if repeated:
+            prev_context = (previous or {}).get("source_context") or {}
+            prev_git = prev_context.get("git") or prev_context
+            source_unchanged = bool(git_state.get("clean")) and prev_git.get("head") == git_state.get("head")
+            if source_unchanged:
+                status = "STALLED"
+                exit_code = EXIT_STALLED
+        report = {
+            "schema_version": 1,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "iteration": iteration,
+            "project": str(project.resolve()),
+            "status": status,
+            "summary": f"hil iteration {iteration}: {status}",
+            "signature": signature,
+            "compiler_errors": compiler_errors or [],
+            "fault_diagnostics": fault,
+            "serial_log_tail": serial_text[-2000:],
+            "next_actions": HIL_NEXT_ACTIONS.get(status, []),
+            "repeated_failure": repeated,
+            "source_unchanged": source_unchanged,
+            "source_context": {"git": git_state, "restore_point": restore_point},
+        }
+        report["ai_repair_prompt"] = build_repair_prompt(report)
+        write_diagnostic_report(report, report_out)
+        if args.json:
+            emit(report, True)
+        else:
+            print(f"{status} (iteration {iteration}, signature {signature})")
+            print(f"diagnostic report: {report_out}")
+            for action in report["next_actions"]:
+                print(f"  next: {action}")
+        return exit_code
+
+    build_results = run_commands(build_steps)
+    if not build_results or any(result.get("exit_code") != 0 for result in build_results):
+        output = "\n".join((result.get("stdout") or "") + "\n" + (result.get("stderr") or "") for result in build_results)
+        return finish("BUILD_FAILED", compiler_errors=parse_compiler_errors(output), serial_text="")
+
+    for name, content in flash_extras.items():
+        Path(name).write_text(content, encoding="utf-8")
+    flash_results = run_commands(flash_steps)
+    if not flash_results or any(result.get("exit_code") != 0 for result in flash_results):
+        output = "\n".join((result.get("stdout") or "") + "\n" + (result.get("stderr") or "") for result in flash_results)
+        return finish("FLASH_FAILED", compiler_errors=parse_compiler_errors(output), serial_text="")
+
+    fault = decode_fault(cfsr=parse_hex(args.cfsr) or 0, hfsr=parse_hex(args.hfsr) or 0, bfar=parse_hex(args.bfar), pc=parse_hex(args.pc), lr=parse_hex(args.lr))
+    try:
+        data, mode = _hil_capture(args)
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return finish("SERIAL_UNAVAILABLE", fault=fault if fault["cfsr_bits"] or fault["hfsr_bits"] else None)
+    if not data:
+        return finish("SERIAL_UNAVAILABLE" if mode == "serial" else "TIMEOUT", fault=fault if fault["cfsr_bits"] or fault["hfsr_bits"] else None)
+    serial_text = data.decode("utf-8", errors="replace")
+    lowered = serial_text.lower()
+    decoded_fault = fault if (fault["cfsr_bits"] or fault["hfsr_bits"]) else None
+    if decoded_fault:
+        return finish("HARD_FAULT", serial_text=serial_text, fault=decoded_fault)
+    if any(marker in lowered for marker in ("assert failed", "assertion failed", "assert_failed")):
+        return finish("ASSERTION_FAILED", serial_text=serial_text)
+    if any(marker in lowered for marker in FAULT_MARKERS):
+        return finish("HARD_FAULT", serial_text=serial_text)
+    if scan_token(data, args.expect):
+        return finish("TEST_PASSED", serial_text=serial_text)
+    return finish("TEST_FAILED", serial_text=serial_text)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="embedded_dev.py",
-        description="embedded-dev tool layer: build, flash, monitor, registers and fault decoding with an exit-code contract.",
+        description="embedded-dev tool layer: build, flash, monitor, registers, fault and protocol decoding, HIL diagnosis and report validation with an exit-code contract.",
     )
     parser.add_argument("--version", action="version", version=f"embedded-dev tool layer {read_version()}")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -892,6 +1329,7 @@ def build_parser() -> argparse.ArgumentParser:
     regs = sub.add_parser("regs", help="decode a register dump (offline) or print the read plan")
     regs.add_argument("--values", help="comma-separated name=0xHEX pairs, e.g. pc=0x08000100,cfsr=0x02000000")
     regs.add_argument("--from-text", dest="from_text", help="file containing a captured openocd/gdb register dump")
+    regs.add_argument("--elf", help="ELF with DWARF data: resolve pc/lr symbols with addr2line (DWARF gate)")
     regs.add_argument("--dry-run", action="store_true")
     regs.add_argument("--json", action="store_true")
     regs.set_defaults(func=cmd_regs)
@@ -905,8 +1343,52 @@ def build_parser() -> argparse.ArgumentParser:
     fault.add_argument("--lr")
     fault.add_argument("--psp")
     fault.add_argument("--msp")
+    fault.add_argument("--elf", help="ELF with DWARF data: resolve pc/lr symbols with addr2line (DWARF gate)")
     fault.add_argument("--json", action="store_true")
     fault.set_defaults(func=cmd_fault)
+
+    decode = sub.add_parser("decode", help="decode UART frames or CAN ISO-TP/UDS/OBD-II/J1939 from a JSON protocol spec")
+    decode.add_argument("kind", choices=["validate", "uart", "can"])
+    decode.add_argument("--spec", required=True)
+    decode.add_argument("--hex", help="inline hex bytes, or candump lines when kind=can")
+    decode.add_argument("--file", help="captured stream file (hex text, raw bytes or candump log)")
+    decode.add_argument("--log", help="candump log file (kind=can)")
+    decode.add_argument("--format", default="hex", choices=["hex", "bin"])
+    decode.add_argument("--strict", action="store_true", help="exit 4 when the stream contains decode errors")
+    decode.add_argument("--json", action="store_true")
+    decode.set_defaults(func=cmd_decode)
+
+    hil = sub.add_parser("hil", help="build -> flash -> monitor a hardware pass token and write a diagnostic report")
+    hil.add_argument("--project", required=True)
+    hil.add_argument("--image", help="ELF/bin image to flash (required for a real run)")
+    hil.add_argument("--expect", help="pass token the firmware must print (required for a real run)")
+    hil.add_argument("--port")
+    hil.add_argument("--baud", type=int, default=115200)
+    hil.add_argument("--timeout", type=float, default=10.0)
+    hil.add_argument("--build-backend", dest="build_backend", default="auto", choices=["auto", *BUILD_BACKENDS])
+    hil.add_argument("--build-dir", default="build")
+    hil.add_argument("--flash-backend", dest="flash_backend", default="auto", choices=["auto", *FLASH_BACKENDS])
+    hil.add_argument("--chip")
+    hil.add_argument("--target")
+    hil.add_argument("--probe")
+    hil.add_argument("--openocd-interface")
+    hil.add_argument("--openocd-target", dest="openocd_target")
+    hil.add_argument("--jlink-device", dest="jlink_device")
+    hil.add_argument("--snr")
+    hil.add_argument("--platformio-env", dest="platformio_env")
+    hil.add_argument("--mock-file", dest="mock_file", help="offline: scan a captured byte file instead of a real port")
+    hil.add_argument("--report-out", dest="report_out", default="diagnostic_report.json")
+    hil.add_argument("--previous", help="previous diagnostic_report.json: detect repeated failures")
+    hil.add_argument("--iteration", type=int, default=1)
+    hil.add_argument("--restore-point", dest="restore_point", action="store_true", help="record a git stash commit before the attempt")
+    hil.add_argument("--cfsr")
+    hil.add_argument("--hfsr")
+    hil.add_argument("--bfar")
+    hil.add_argument("--pc")
+    hil.add_argument("--lr")
+    hil.add_argument("--dry-run", action="store_true")
+    hil.add_argument("--json", action="store_true")
+    hil.set_defaults(func=cmd_hil)
 
     report = sub.add_parser("report", help="validate a completion report against the evidence schema")
     report.add_argument("--file")

@@ -1,0 +1,36 @@
+{
+  "schema_version": "embedded-protocol.v1",
+  "name": "env-sensor demo (0xAA 0x55 + len + crc16)",
+  "transport": {
+    "type": "uart",
+    "baud": 115200,
+    "note": "Replace this spec with the real datasheet values; never guess a checksum range or byte order."
+  },
+  "framing": {
+    "header": "AA55",
+    "length": {
+      "offset": 0,
+      "size": 1,
+      "endian": "big",
+      "includes_checksum": true
+    },
+    "checksum": {
+      "algorithm": "crc16_modbus",
+      "over": "all_before_checksum"
+    },
+    "byte_order": "little",
+    "max_frame": 64
+  },
+  "fields": [
+    {"name": "msg_type", "offset": 0, "size": 1, "type": "uint8",
+     "enum": {"1": "measure_request", "2": "report", "3": "heartbeat"}},
+    {"name": "seq", "offset": 1, "size": 1, "type": "uint8"},
+    {"name": "temperature", "offset": 2, "size": 2, "type": "int16", "scale": 0.01, "unit": "degC"},
+    {"name": "humidity", "offset": 4, "size": 2, "type": "uint16", "scale": 0.1, "unit": "%RH"},
+    {"name": "status_flags", "offset": 6, "size": 1, "type": "uint8",
+     "bits": {"0": "sensor_ok", "1": "heater_on", "7": "low_battery"}}
+  ],
+  "commands": [
+    {"name": "read_measurement", "request_type": 1, "response_type": 2}
+  ]
+}

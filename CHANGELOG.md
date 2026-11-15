@@ -7,6 +7,48 @@ All notable changes to this repository are documented here. The format follows
 Agent Skills are consumed by an LLM, so the version number also tells the agent
 whether it is looking at the same contract as an earlier session.
 
+## [0.5.0] - 2026-11-15
+
+### Added
+
+- `scripts/protocol_decode.py`: decode UART captures from an `embedded-protocol.v1`
+  JSON specification (framing header, length field, checksum `none`/`sum8`/`xor8`/
+  `crc8`/`crc16_modbus`/`crc16_ccitt`, typed fields, `scale`/`value_offset`, enums and
+  bit fields, request/response commands), plus candump log decoding with ISO-TP
+  multi-frame reassembly, UDS service/NRC names, OBD-II PIDs, and J1939 PGNs.
+  Missing specification details stay `unknown`; a bad spec exits 6, decode errors exit 4
+  under `--strict`.
+- `scripts/mcp_server.py`: dependency-free stdio MCP server that exposes the existing
+  `env`/`build`/`flash`/`monitor`/`regs`/`fault`/`decode`/`report`/`hil` tools over
+  JSON-RPC, with `--self-test` for CI.
+- `embedded_dev.py decode`: validates a protocol spec or decodes UART/CAN input.
+- `embedded_dev.py hil`: build -> flash -> monitor pass token -> `diagnostic_report.json`;
+  the report carries a stable failure `signature`, `next_actions`, `ai_repair_prompt`,
+  `repeated_failure`, and `source_unchanged`. The same signature on unchanged sources is
+  reported as `STALLED` (exit 5) instead of letting the agent edit code blindly.
+- `embedded_dev.py fault/regs --elf`: resolve PC/LR through `addr2line` as a DWARF gate;
+  a missing tool or ELF is a configuration error, not a guessed symbol.
+- `scripts/diagnostic_report_schema.json`: reviewable contract for HIL reports.
+- `references/protocols.md`: specification-driven UART framing, checksum and CAN
+  ISO-TP/UDS/OBD-II/J1939 decoding rules, including the no-guess boundary.
+- `examples/protocols/`: a validated UART sensor spec, a two-frame capture, a candump
+  log with UDS and OBD-II traffic, and a README walkthrough.
+- `tests/test_protocol_decode.py`, `tests/test_mcp_server.py`, `tests/test_hil.py`,
+  plus lint coverage for the new CLI subcommands, diagnostic schema, bundled protocol
+  examples, and the MCP self-test.
+
+### Changed
+
+- `SKILL.md` and `README.md` document `decode`, `hil`, the MCP server, and the corrected
+  exit-code semantics (`1` build failed, `2` flash failed, `5` stalled).
+- CI now runs the MCP self-test, decodes the bundled protocol examples, and dry-runs the
+  HIL pipeline on all three operating systems.
+
+### Notes
+
+- Interface ideas were studied from public projects; no source code was copied.
+  See `THIRD_PARTY_NOTICES.md` for the exact boundary.
+
 ## [0.4.0] - 2026-11-15
 
 ### Added

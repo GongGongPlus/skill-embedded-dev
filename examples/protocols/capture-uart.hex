@@ -1,0 +1,4 @@
+# Captured UART stream for examples/protocols/uart-env-sensor.json
+# frame 1: report seq=7  temperature=23.45 degC  humidity=54.3 %RH  flags=0x81
+# frame 2: heartbeat
+AA5509020729091F0281D977AA550903010000000000674D

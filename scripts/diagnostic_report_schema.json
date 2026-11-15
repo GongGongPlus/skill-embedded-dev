@@ -1,0 +1,71 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "embedded-diagnostic-report.v1",
+  "title": "embedded-dev hardware-in-the-loop diagnostic report",
+  "description": "Contract written by `embedded_dev.py hil` after every build -> flash -> monitor attempt. The same keys drive the ai_repair_prompt, so a failure can be repaired from evidence instead of guesses.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "timestamp",
+    "iteration",
+    "project",
+    "status",
+    "summary",
+    "signature",
+    "next_actions",
+    "ai_repair_prompt",
+    "repeated_failure",
+    "source_unchanged"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "timestamp": {"type": "string", "description": "ISO-8601 UTC time of the attempt"},
+    "iteration": {"type": "integer", "minimum": 1},
+    "project": {"type": "string"},
+    "status": {
+      "type": "string",
+      "enum": [
+        "TEST_PASSED",
+        "BUILD_FAILED",
+        "FLASH_FAILED",
+        "HARD_FAULT",
+        "ASSERTION_FAILED",
+        "TEST_FAILED",
+        "TIMEOUT",
+        "SERIAL_UNAVAILABLE",
+        "STALLED"
+      ]
+    },
+    "summary": {"type": "string"},
+    "signature": {"type": "string", "description": "sha256[:16] of status + fault bits + serial tail; equal signatures mean the same failure"},
+    "next_actions": {"type": "array", "items": {"type": "string"}},
+    "ai_repair_prompt": {"type": "string", "description": "self-contained repair prompt: status, evidence, repeated-failure warning and next actions"},
+    "repeated_failure": {"type": "boolean"},
+    "source_unchanged": {"type": "boolean", "description": "true only when the same signature repeats and the git head/working tree did not change"},
+    "compiler_errors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["file", "line", "severity", "message"],
+        "properties": {
+          "file": {"type": "string"},
+          "line": {"type": "integer"},
+          "severity": {"type": "string"},
+          "message": {"type": "string"}
+        }
+      }
+    },
+    "fault_diagnostics": {
+      "type": ["object", "null"],
+      "description": "decode_fault() output (CFSR/HFSR bits, BFAR/MMFAR, PC/LR) or null"
+    },
+    "serial_log_tail": {"type": "string", "description": "last 2000 characters captured from the target UART"},
+    "source_context": {
+      "type": "object",
+      "properties": {
+        "git": {"type": "object"},
+        "restore_point": {"type": ["string", "null"]}
+      }
+    }
+  }
+}

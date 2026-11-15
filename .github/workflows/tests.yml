@@ -46,6 +46,23 @@ jobs:
           python scripts/embedded_dev.py flash --image build/firmware.elf --backend openocd \
             --openocd-interface interface/cmsis-dap.cfg --openocd-target target/stm32f1x.cfg --dry-run
 
+      - name: Protocol decode examples
+        shell: bash
+        run: |
+          python scripts/embedded_dev.py decode validate --spec examples/protocols/uart-env-sensor.json
+          python scripts/embedded_dev.py decode uart --spec examples/protocols/uart-env-sensor.json \
+            --file examples/protocols/capture-uart.hex --json
+          python scripts/embedded_dev.py decode can --log examples/protocols/candump.log --json
+
+      - name: MCP server self-test
+        run: python scripts/mcp_server.py --self-test
+
+      - name: HIL dry-run plan (no hardware)
+        run: |
+          python scripts/embedded_dev.py hil --project examples/stm32-openocd --image build/firmware.elf \
+            --build-backend cmake --flash-backend openocd --openocd-interface interface/cmsis-dap.cfg \
+            --openocd-target target/stm32f1x.cfg --dry-run
+
       - name: Refuse to guess a backend
         shell: bash
         run: |

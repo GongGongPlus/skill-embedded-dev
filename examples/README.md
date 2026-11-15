@@ -8,6 +8,7 @@ can stay as teaching material for the repository.
 | Path | What it demonstrates |
 |---|---|
 | `stm32-openocd/` | Bare-metal STM32F103C8 build with CMake + GNU Arm toolchain, OpenOCD flash, LED smoke test, register read-back |
+| `protocols/` | `serial_protocol.v1` UART specification, a capture, and a candump log decoded as ISO-TP/UDS/OBD-II/J1939 |
 | `cases/01-hardfault-bfar.md` | BusFault capture and root cause from CFSR/BFAR, with evidence levels |
 | `cases/02-uart-token-hil.md` | Hardware-in-the-loop pass/fail using a UART token and exit codes |
 | `cases/03-i2c-bus-dead.md` | Dead I2C bus triage: pull-ups, clock stretching, bus recovery |

@@ -1,16 +1,17 @@
 # 嵌入式与固件开发 / Embedded and Firmware Development
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.4.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.5.0-blue.svg)](CHANGELOG.md)
 [![Tests](https://img.shields.io/badge/tests-unittest-4c1.svg)](.github/workflows/tests.yml)
 [![Codex Skill](https://img.shields.io/badge/Codex-Skill-black.svg)](SKILL.md)
 
 > 面向 MCU、外设、RTOS、故障定位、Bootloader 与真机验证的嵌入式开发 Skill，
-> 自带可执行的 build / flash / monitor / regs / fault 工具层与证据契约。
+> 自带可执行的 build / flash / monitor / regs / fault / decode / hil 工具层、
+> 证据契约与 MCP 服务。
 >
 > An embedded-development skill for MCUs, peripherals, RTOS work, fault diagnosis,
 > bootloaders, and hardware validation, with an executable build/flash/monitor/
-> regs/fault tool layer and an evidence contract.
+> regs/fault/decode/hil tool layer, an evidence contract, and an MCP server.
 
 ## 中文介绍
 
@@ -23,6 +24,8 @@
 - RISC-V MCU（ESP32-C3/C6、GD32VF103、CH32V003 等）的 trap 现场与根因映射
 - 嵌入式 Linux 外设分层排查（device tree、pinctrl、i2c/spi/can/gpio 用户态）
 - BLE/Wi-Fi/LoRa/2.4 GHz 的配置、抓包、天线与功耗分诊
+- 串口协议从规范到解码：切帧、长度/校验、类型/缩放、枚举与位域；CAN 侧 ISO-TP 重组与 UDS/OBD-II/J1939 解码
+- 用 HIL 闭环（构建→烧录→串口令牌→诊断报告）判断真机通过/失败，并识别重复失败与停滞
 - 通过 MISRA 静态检查、编写 host/目标板单元测试、把编译-测试-烧录做成 CI 门禁
 - 区分源码检查、编译、烧录与真实硬件证据，报告必须带证据等级
 
@@ -39,6 +42,14 @@ python scripts/embedded_dev.py flash --image build/firmware.elf --backend openoc
 python scripts/embedded_dev.py monitor --port COM7 --baud 115200 --expect "TEST_PASSED"
 python scripts/embedded_dev.py regs --from-text regs.txt --json
 python scripts/embedded_dev.py fault --cfsr 0x8200 --bfar 0x20000100
+python scripts/embedded_dev.py fault --cfsr 0x8200 --pc 0x08000123 --elf build/firmware.elf
+python scripts/embedded_dev.py decode validate --spec examples/protocols/uart-env-sensor.json
+python scripts/embedded_dev.py decode uart --spec examples/protocols/uart-env-sensor.json \
+  --file examples/protocols/capture-uart.hex --json
+python scripts/embedded_dev.py decode can --log examples/protocols/candump.log --json
+python scripts/embedded_dev.py hil --project examples/stm32-openocd --image build/firmware.elf \
+  --build-backend cmake --flash-backend openocd --openocd-interface interface/cmsis-dap.cfg \
+  --openocd-target target/stm32f1x.cfg --mock-file mock.txt --expect "TEST_PASSED"
 python scripts/embedded_dev.py report --file report.json
 ```
 
@@ -48,12 +59,17 @@ python scripts/embedded_dev.py report --file report.json
 | `build` | cmake / PlatformIO / ESP-IDF 构建，支持 dry-run |
 | `flash` | OpenOCD、pyOCD、J-Link、STM32CubeProgrammer、esptool、nrfjprog、probe-rs、PlatformIO；必须显式给出识别参数，多候选不猜 |
 | `monitor` | 串口抓取 + 令牌断言（`--expect`），支持 `--mock-file` 离线测试 |
-| `regs` | 解析寄存器 dump 并解码 CFSR/HFSR |
-| `fault` | 由 CFSR/HFSR/地址/PC 生成根因提示与下一步 |
+| `regs` | 解析寄存器 dump 并解码 CFSR/HFSR；`--elf` 解析 PC/LR |
+| `fault` | 由 CFSR/HFSR/地址/PC 生成根因提示与下一步；`--elf` 走 addr2line（DWARF 门禁） |
+| `decode` | `serial_protocol.v1` 规范校验、UART 抓包解码、candump 的 ISO-TP/UDS/OBD-II/J1939 解码 |
+| `hil` | 构建→烧录→串口令牌→`diagnostic_report.json`；识别重复失败，源码未变报 `STALLED` |
 | `report` | 校验完成报告契约（证据等级、命令、风险、下一步） |
 
-统一退出码：`0` 正常、`1` 工具错误、`2` 构建失败、`3` 检测到故障、
-`4` 设备/测试失败、`5` 超时、`6` 配置错误（缺工具或缺必填参数）。
+统一退出码：`0` 成功、`1` 构建失败、`2` 烧录失败、`3` 检测到硬件故障、
+`4` 测试/串口/超时失败、`5` 停滞（同一失败签名且源码未变）、`6` 配置错误（缺工具、缺必填参数或多个候选）。
+
+`scripts/mcp_server.py` 把同一套工具经 stdio JSON-RPC 暴露给支持 MCP 的宿主（Claude Code、Codex、
+DSH 等），不再维护第二套命令；`--self-test` 可离线验证工具面与 JSON-RPC 契约。
 
 ### 一键安装 / 多平台
 
@@ -89,6 +105,7 @@ git clone https://github.com/GongGongPlus/skill-embedded-dev.git "$env:USERPROFI
 ### 示例与现场案例
 
 - `examples/stm32-openocd/`：裸机 STM32F103C8 + CMake/GNU Arm + OpenOCD 的最小真机冒烟工程
+- `examples/protocols/`：`serial_protocol.v1` 规范、UART 抓包、candump（UDS/OBD-II）与解码演示
 - `examples/cases/01-hardfault-bfar.md`：BusFault/BFAR 现场定位
 - `examples/cases/02-uart-token-hil.md`：串口令牌 HIL 通过/失败门禁
 - `examples/cases/03-i2c-bus-dead.md`：I2C 总线死锁的分层排查
@@ -101,7 +118,8 @@ python -m compileall -q scripts tests
 ```
 
 GitHub Actions（`.github/workflows/tests.yml`）在 Ubuntu/Windows/macOS × Python 3.10/3.12
-上运行单元测试、编译检查、CLI 帮助、dry-run 冒烟、报告契约、安装器校验与文档相对链接检查。
+上运行单元测试、编译检查、CLI 帮助、dry-run 冒烟、协议解码示例、MCP self-test、HIL dry-run、
+报告契约、安装器校验与文档相对链接检查。
 
 ### 证据与边界
 
@@ -122,17 +140,24 @@ GitHub Actions（`.github/workflows/tests.yml`）在 Ubuntu/Windows/macOS × Pyt
 - Debug RISC-V MCUs (ESP32-C3/C6, GD32VF103, CH32V003) through `mcause`/`mtval`/`mepc`
 - Triage embedded Linux peripherals (device tree, pinctrl, i2c/spi/can/gpio user space)
 - Triage BLE, Wi-Fi, LoRa/LoRaWAN, and 2.4 GHz configuration, captures, antenna, and power
+- Turn a serial protocol specification into framed decode: header/length/checksum, typed fields, scale/value offset, enums/bits; decode CAN ISO-TP, UDS, OBD-II, and J1939
+- Close the hardware loop with HIL (build -> flash -> UART token -> diagnostic report) and detect repeated failures and stalls
 - Enforce MISRA static checks, write host/target unit tests, and gate build-test-flash in CI
 - Keep source review, build, flash, and physical hardware evidence separate and labeled
 
 ### Tool layer
 
-`scripts/embedded_dev.py` provides `env`, `build`, `flash`, `monitor`, `regs`, `fault`, and
-`report` subcommands with a stable exit-code contract (`0` ok, `1` tool error, `2` build
-failed, `3` fault detected, `4` device/test failed, `5` timeout, `6` configuration error).
-Every hardware-writing command is dry-run first and every flash backend requires its
-explicit identifying options; ambiguous probes or backends return candidates instead of
-guessing.
+`scripts/embedded_dev.py` provides `env`, `build`, `flash`, `monitor`, `regs`, `fault`,
+`decode`, `hil`, and `report` subcommands with a stable exit-code contract (`0` ok,
+`1` build failed, `2` flash failed, `3` fault detected, `4` device/test/serial failure,
+`5` stalled, `6` configuration error). Every hardware-writing command is dry-run first and
+every flash backend requires its explicit identifying options; ambiguous probes or
+backends return candidates instead of guessing. `hil` writes `diagnostic_report.json`
+with a failure signature, `next_actions`, `ai_repair_prompt`, `repeated_failure`, and
+`source_unchanged`, turning the same signature on unchanged sources into `STALLED`.
+
+`scripts/mcp_server.py` exposes the same tools over stdio JSON-RPC MCP, and its
+`--self-test` verifies the tool surface offline.
 
 ### Installation
 
@@ -157,8 +182,10 @@ entire knowledge base into context. Repeatable, verifiable mechanical work belon
 ### Examples
 
 `examples/stm32-openocd/` is a minimal bare-metal STM32F103C8 build (CMake, GNU Arm,
-OpenOCD). `examples/cases/` contains three field-case walkthroughs: HardFault/BFAR capture,
-UART-token HIL gating, and dead I2C bus triage.
+OpenOCD). `examples/protocols/` contains a validated UART specification, a capture, a
+candump log with UDS/OBD-II traffic, and decode walkthroughs. `examples/cases/` contains
+three field-case walkthroughs: HardFault/BFAR capture, UART-token HIL gating, and dead
+I2C bus triage.
 
 ### Evidence boundary
 
@@ -179,6 +206,7 @@ skill-embedded-dev/
 |-- examples/
 |   |-- README.md
 |   |-- stm32-openocd/          # 裸机 STM32F103 示例：CMake、startup、linker、openocd.cfg
+|   |-- protocols/              # serial_protocol.v1 规范、UART 抓包、candump 与解码演示
 |   |-- cases/                  # 三个现场案例
 |-- references/
 |   |-- board-pinouts.md
@@ -187,18 +215,22 @@ skill-embedded-dev/
 |   |-- peripheral-bringup.md
 |   |-- platforms.md
 |   |-- power-on-checklist.md
+|   |-- protocols.md
 |   |-- quality-gate.md
 |   |-- riscv.md
 |   |-- rtos-concurrency.md
 |   |-- wireless.md
 |   |-- zephyr-linux.md
 |-- scripts/
-|   |-- embedded_dev.py         # 工具层 CLI（build/flash/monitor/regs/fault/report）
+|   |-- embedded_dev.py         # 工具层 CLI（build/flash/monitor/regs/fault/decode/hil/report）
+|   |-- protocol_decode.py      # UART 规范解码 + ISO-TP/UDS/OBD-II/J1939
+|   |-- mcp_server.py           # stdio MCP 服务（暴露同一套工具）
 |   |-- install.py              # 多平台一键安装/校验
 |   |-- report_schema.json      # 完成报告契约
+|   |-- diagnostic_report_schema.json  # HIL 诊断报告契约
 |   |-- fault_decode.sh
 |   |-- stack_report.py
-|-- tests/                      # CLI、安装器、仓库元数据与文档链接测试
+|-- tests/                      # CLI、协议解码、MCP、HIL、安装器、仓库元数据与文档链接测试
 |-- CHANGELOG.md
 |-- SKILL.md
 |-- VERSION
@@ -217,6 +249,7 @@ Reference topics / 专题资料：
 - [references/riscv.md](references/riscv.md)
 - [references/zephyr-linux.md](references/zephyr-linux.md)
 - [references/wireless.md](references/wireless.md)
+- [references/protocols.md](references/protocols.md)
 
 ## Changelog / 变更记录
 

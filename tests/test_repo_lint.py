@@ -68,7 +68,7 @@ class TestSkillEntrypoint(unittest.TestCase):
     def test_every_reference_is_linked_from_skill(self):
         skill_text = (REPO / "SKILL.md").read_text(encoding="utf-8")
         references = sorted((REPO / "references").glob("*.md"))
-        self.assertGreaterEqual(len(references), 11)
+        self.assertGreaterEqual(len(references), 12)
         for path in references:
             self.assertIn(f"references/{path.name}", skill_text, f"{path.name} is not reachable from SKILL.md")
 
@@ -113,6 +113,11 @@ class TestContract(unittest.TestCase):
         schema = json.loads((REPO / "scripts" / "report_schema.json").read_text(encoding="utf-8"))
         self.assertEqual(schema["required"], ed.REPORT_REQUIRED)
 
+    def test_diagnostic_schema_matches_hil_contract(self):
+        schema = json.loads((REPO / "scripts" / "diagnostic_report_schema.json").read_text(encoding="utf-8"))
+        self.assertEqual(schema["required"], ed.DIAGNOSTIC_REQUIRED)
+        self.assertEqual(set(schema["properties"]["status"]["enum"]), set(ed.DIAGNOSTIC_STATUSES))
+
     def test_emitted_example_satisfies_validator(self):
         out = subprocess.run(
             [sys.executable, str(REPO / "scripts" / "embedded_dev.py"), "report", "--emit-example", "--json"],
@@ -149,8 +154,48 @@ class TestInstallerAndCli(unittest.TestCase):
             encoding="utf-8",
         )
         self.assertEqual(out.returncode, 0)
-        for subcommand in ("env", "build", "flash", "monitor", "regs", "fault", "report"):
+        for subcommand in ("env", "build", "flash", "monitor", "regs", "fault", "decode", "hil", "report"):
             self.assertIn(subcommand, out.stdout)
+
+    def test_bundled_protocol_examples_decode(self):
+        example = REPO / "examples" / "protocols" / "uart-env-sensor.json"
+        capture = REPO / "examples" / "protocols" / "capture-uart.hex"
+        validate = subprocess.run(
+            [sys.executable, str(REPO / "scripts" / "embedded_dev.py"), "decode", "validate", "--spec", str(example), "--json"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        self.assertEqual(validate.returncode, 0, validate.stderr)
+        decoded = subprocess.run(
+            [
+                sys.executable,
+                str(REPO / "scripts" / "embedded_dev.py"),
+                "decode",
+                "uart",
+                "--spec",
+                str(example),
+                "--file",
+                str(capture),
+                "--json",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        self.assertEqual(decoded.returncode, 0, decoded.stderr)
+        payload = json.loads(decoded.stdout)
+        self.assertEqual(len(payload["frames"]), 2)
+        self.assertEqual(payload["summary"]["checksum_failures"], 0)
+
+    def test_mcp_server_self_test(self):
+        out = subprocess.run(
+            [sys.executable, str(REPO / "scripts" / "mcp_server.py"), "--self-test"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        self.assertEqual(out.returncode, 0, out.stderr or out.stdout)
 
     def test_compileall(self):
         out = subprocess.run(
