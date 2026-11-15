@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""embedded-dev tool layer: build / flash / monitor / regs / fault / decode / hil /
-tune / board / memory.
+"""embedded-dev tool layer: build / flash / monitor / regs / symbolize / stack /
+fault / decode / hil / tune / board / memory.
 
 Design rules (see SKILL.md "Tool layer and evidence contract"):
 - Never guess a probe, toolchain, target, address, controller, pin or control
@@ -28,7 +28,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import re
 import shlex
 import shutil
@@ -48,7 +47,7 @@ EXIT_CONFIG = 6
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
-VERSION_FALLBACK = "0.6.0"
+VERSION_FALLBACK = "0.7.0"
 
 
 def read_version() -> str:
@@ -253,7 +252,13 @@ ENV_TOOLS = {
     "probe-rs": ["probe-rs", "probe_rs"],
     "arm-none-eabi-gcc": ["arm-none-eabi-gcc"],
     "arm-none-eabi-gdb": ["arm-none-eabi-gdb", "gdb-multiarch"],
-    "addr2line": ["arm-none-eabi-addr2line", "addr2line"],
+    "addr2line": [
+        "arm-none-eabi-addr2line",
+        "xtensa-esp32s3-elf-addr2line",
+        "xtensa-esp32-elf-addr2line",
+        "riscv32-esp-elf-addr2line",
+        "addr2line",
+    ],
 }
 
 
@@ -898,6 +903,153 @@ def cmd_monitor(args: argparse.Namespace) -> int:
     return EXIT_OK if found else EXIT_DEVICE
 
 
+STACK_WARNING = "below threshold"
+STACK_WORDS_HINT = "StackType_t (usually uint32_t = 4 bytes)"
+
+
+def parse_tasklist(text: str) -> list[dict]:
+    """Parse FreeRTOS vTaskList / uxTaskGetSystemState text output.
+
+    vTaskList columns: name state priority free_stack_words task_number. The
+    free-stack column is read as the second-to-last integer so both the plain
+    vTaskList dump and a Task-Status table with a trailing index work. Anything
+    that does not look like a task row is skipped rather than guessed at.
+    """
+    tasks: list[dict] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or set(stripped) <= set("-= "):
+            continue
+        parts = stripped.split()
+        if len(parts) < 4:
+            continue
+        numbers = [part for part in parts[1:] if part.isdigit()]
+        if len(numbers) < 2:
+            continue
+        name = parts[0]
+        state = parts[1] if not parts[1].isdigit() else None
+        tasks.append(
+            {
+                "name": name,
+                "state": state,
+                "free_words": int(numbers[-2]),
+                "free_bytes": int(numbers[-2]) * 4,
+            }
+        )
+    return tasks
+
+
+def cmd_stack(args: argparse.Namespace) -> int:
+    if args.tasklist:
+        source = Path(args.tasklist)
+        try:
+            text = source.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            print(f"cannot read {source}: {exc}", file=sys.stderr)
+            return EXIT_CONFIG
+        origin = str(source)
+    else:
+        text = sys.stdin.read()
+        origin = "stdin"
+    tasks = parse_tasklist(text)
+    if not tasks:
+        print(
+            "no task rows parsed: expected vTaskList/uxTaskGetSystemState output "
+            "(name state priority free_stack_words [index])",
+            file=sys.stderr,
+        )
+        return EXIT_DEVICE
+    word_bytes = args.word_bytes
+    threshold_words = args.min_free
+    for task in tasks:
+        task["free_bytes"] = task["free_words"] * word_bytes
+        task["status"] = "WARN" if task["free_words"] < threshold_words else "OK"
+    worst = min(tasks, key=lambda task: task["free_words"])
+    result = {
+        "source": origin,
+        "word_bytes": word_bytes,
+        "min_free_words": threshold_words,
+        "min_free_bytes": threshold_words * word_bytes,
+        "task_count": len(tasks),
+        "below_threshold": [task["name"] for task in tasks if task["status"] == "WARN"],
+        "worst": worst,
+        "tasks": tasks,
+    }
+    if args.json:
+        emit(result, True)
+    else:
+        print(f"{'task':<20}{'free(words)':>13}{'free(bytes)':>13}  state")
+        for task in tasks:
+            print(
+                f"{task['name']:<20}{task['free_words']:>13}{task['free_bytes']:>13}  "
+                f"{task['status']} ({task['state'] or '?'})"
+            )
+        print(
+            f"\nlowest watermark: {worst['name']} at {worst['free_bytes']} bytes "
+            f"(threshold {threshold_words * word_bytes} bytes, unit {STACK_WORDS_HINT})"
+        )
+        if result["below_threshold"]:
+            print(f"{STACK_WARNING}: {', '.join(result['below_threshold'])}")
+    return EXIT_FAULT if result["below_threshold"] else EXIT_OK
+
+
+def resolve_raw_addresses(elf: str | None, addresses: list[int]) -> tuple[dict, str | None]:
+    """Resolve bare addresses (any core) with addr2line, for crash dumps without registers."""
+    if not elf:
+        return {}, "an --elf image is required to resolve addresses"
+    if not Path(elf).is_file():
+        return {}, f"ELF file not found: {elf}"
+    tool = find_tool(ENV_TOOLS["addr2line"])
+    if tool is None:
+        return {}, "addr2line not found (DWARF gate): install arm-none-eabi-binutils or the vendor toolchain"
+    if not addresses:
+        return {}, None
+    command = [tool, "-f", "-C", "-e", str(elf), *[f"0x{address:08x}" for address in addresses]]
+    proc = subprocess.run(command, capture_output=True, text=True, encoding="utf-8")
+    lines = [line.strip() for line in proc.stdout.splitlines()]
+    resolved = []
+    for index, address in enumerate(addresses):
+        function = lines[2 * index] if 2 * index < len(lines) else "??"
+        location = lines[2 * index + 1] if 2 * index + 1 < len(lines) else "??:0"
+        resolved.append({"address": f"0x{address:08x}", "function": function, "location": location})
+    if proc.returncode != 0 and not resolved:
+        return {}, (proc.stderr or "addr2line failed").strip()
+    return {"tool": tool, "symbols": resolved}, None
+
+
+def cmd_symbolize(args: argparse.Namespace) -> int:
+    if not args.elf:
+        print("symbolize requires --elf <image>: without DWARF there is nothing to resolve", file=sys.stderr)
+        return EXIT_CONFIG
+    addresses: list[int] = []
+    for raw in args.addr or []:
+        try:
+            value = parse_hex(raw)
+        except ValueError:
+            print(f"cannot parse address: {raw}", file=sys.stderr)
+            return EXIT_CONFIG
+        if value is None:
+            print(f"cannot parse address: {raw}", file=sys.stderr)
+            return EXIT_CONFIG
+        addresses.append(value)
+    if not addresses:
+        print("symbolize needs at least one address, e.g. --addr 0x08001234", file=sys.stderr)
+        return EXIT_CONFIG
+    resolved, error = resolve_raw_addresses(args.elf, addresses)
+    if error:
+        print(error, file=sys.stderr)
+        return EXIT_CONFIG
+    if args.json:
+        emit(resolved, True)
+    else:
+        print(f"tool: {resolved['tool']}")
+        print(f"image: {args.elf}")
+        print("confirm this ELF is the same build that is on the board, or the mapping is meaningless")
+        for symbol in resolved["symbols"]:
+            print(f"{symbol['address']}  {symbol['function']}  {symbol['location']}")
+    return EXIT_OK
+
+
 def cmd_regs(args: argparse.Namespace) -> int:
     if args.values:
         values = {}
@@ -1332,8 +1484,9 @@ def build_parser() -> argparse.ArgumentParser:
         prog="embedded_dev.py",
         description=(
             "embedded-dev tool layer: build, flash, monitor, registers, fault and protocol "
-            "decoding, HIL diagnosis, control-loop evidence, board pin maps, project memory "
-            "and report validation with an exit-code contract."
+            "decoding, crash-address symbolization, RTOS stack watermarks, HIL diagnosis, "
+            "control-loop evidence, board pin maps, project memory and report validation "
+            "with an exit-code contract."
         ),
     )
     parser.add_argument("--version", action="version", version=f"embedded-dev tool layer {read_version()}")
@@ -1391,6 +1544,25 @@ def build_parser() -> argparse.ArgumentParser:
     regs.add_argument("--dry-run", action="store_true")
     regs.add_argument("--json", action="store_true")
     regs.set_defaults(func=cmd_regs)
+
+    symbolize = sub.add_parser(
+        "symbolize",
+        help="resolve crash addresses (any core: Cortex-M, Xtensa, RISC-V) to function:line with addr2line",
+    )
+    symbolize.add_argument("--elf", help="ELF with DWARF data from the exact build on the board")
+    symbolize.add_argument("--addr", action="append", help="address to resolve, repeatable (hex)")
+    symbolize.add_argument("--json", action="store_true")
+    symbolize.set_defaults(func=cmd_symbolize)
+
+    stack = sub.add_parser(
+        "stack",
+        help="report FreeRTOS task stack watermarks from vTaskList / uxTaskGetSystemState output",
+    )
+    stack.add_argument("--tasklist", help="file with vTaskList output; omit to read stdin")
+    stack.add_argument("--min-free", dest="min_free", type=int, default=512, help="warning threshold in words (default 512)")
+    stack.add_argument("--word-bytes", dest="word_bytes", type=int, default=4, help="bytes per stack word (default 4)")
+    stack.add_argument("--json", action="store_true")
+    stack.set_defaults(func=cmd_stack)
 
     fault = sub.add_parser("fault", help="decode Cortex-M fault registers")
     fault.add_argument("--cfsr", default="0x0")

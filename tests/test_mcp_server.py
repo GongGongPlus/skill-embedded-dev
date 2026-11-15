@@ -34,6 +34,8 @@ class TestToolSurface(unittest.TestCase):
                 "flash",
                 "monitor",
                 "regs",
+                "symbolize",
+                "stack",
                 "fault",
                 "decode",
                 "report",
@@ -120,6 +122,23 @@ class TestJsonRpc(unittest.TestCase):
         result = mcp.call_tool("fault", {"cfsr": "0x02000000"})
         self.assertFalse(result["isError"])
         self.assertIn("DIVBYZERO", result["content"][0]["text"])
+
+    def test_stack_below_threshold_is_a_diagnosis_not_a_failure(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tasklist = Path(tmp) / "tasklist.txt"
+            tasklist.write_text(
+                "Task State Prio Stack Num\nmain B 2 64 4\nsensor B 3 900 5\n", encoding="utf-8"
+            )
+            result = mcp.call_tool("stack", {"tasklist": str(tasklist), "min_free": "128"})
+        self.assertFalse(result["isError"], result["content"][0]["text"])
+        payload = json.loads(result["content"][0]["text"])
+        self.assertEqual(payload["below_threshold"], ["main"])
+
+    def test_symbolize_requires_the_elf_argument(self):
+        with self.assertRaises(ValueError):
+            mcp.build_argv("symbolize", {"addr": "0x08000100"})
 
 
 class TestSelfTest(unittest.TestCase):

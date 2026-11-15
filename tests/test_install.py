@@ -38,6 +38,19 @@ class TestVerify(unittest.TestCase):
 
 
 class TestInstall(unittest.TestCase):
+    def test_verify_reports_missing_runtime_entries_by_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = Path(tmp)
+            (dest / "SKILL.md").write_text("---\nname: embedded-dev\n---\n", encoding="utf-8")
+            (dest / "references").mkdir()
+            (dest / "references" / "fault-debug.md").write_text("# x", encoding="utf-8")
+            (dest / "scripts").mkdir()
+            (dest / "scripts" / "embedded_dev.py").write_text("# placeholder", encoding="utf-8")
+            errors = installer.verify_install(dest)
+        joined = " ".join(errors)
+        self.assertIn("scripts/install.py", joined)
+        self.assertIn("VERSION", joined)
+
     def test_install_to_temp_then_verify(self):
         with tempfile.TemporaryDirectory() as tmp:
             dest = Path(tmp) / "embedded-dev"
@@ -58,15 +71,18 @@ class TestInstall(unittest.TestCase):
             self.assertEqual(code, 2)
             self.assertTrue((dest / "keep.txt").is_file())
 
-    def test_force_replaces_existing(self):
+    def test_force_replaces_runtime_entries_and_keeps_foreign_files(self):
         with tempfile.TemporaryDirectory() as tmp:
             dest = Path(tmp) / "embedded-dev"
             dest.mkdir()
-            (dest / "stale.txt").write_text("old", encoding="utf-8")
+            (dest / "foreign.txt").write_text("keep me", encoding="utf-8")
+            (dest / "references").mkdir()
+            (dest / "references" / "stale.md").write_text("# stale", encoding="utf-8")
             with contextlib.redirect_stdout(io.StringIO()):
                 code = installer.install("dsh", dest, force=True, dry_run=False, as_json=False)
             self.assertEqual(code, 0)
-            self.assertFalse((dest / "stale.txt").exists())
+            self.assertTrue((dest / "foreign.txt").is_file(), "unrelated files must survive --force")
+            self.assertFalse((dest / "references" / "stale.md").exists(), "stale runtime entries must be replaced")
             self.assertEqual(installer.verify_install(dest), [])
 
     def test_dry_run_creates_nothing(self):
@@ -91,11 +107,79 @@ class TestCli(unittest.TestCase):
         self.assertIn("hosts", payload)
         self.assertGreaterEqual(len(payload["hosts"]), 5)
 
+    def test_list_reports_verification_state_not_just_existence(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            installer.main(["--list", "--json"])
+        payload = json.loads(out.getvalue())
+        for row in payload["hosts"]:
+            self.assertIn("valid", row)
+            self.assertIn("version", row)
+            self.assertIn("version_matches_source", row)
+            if row["installed"]:
+                self.assertEqual(row["valid"], not row["errors"], row)
+            else:
+                self.assertFalse(row["valid"], row)
+
     def test_verify_only_on_missing_install(self):
         with tempfile.TemporaryDirectory() as tmp:
             with contextlib.redirect_stderr(io.StringIO()):
                 code = installer.main(["--dest", str(Path(tmp) / "nope"), "--verify-only"])
         self.assertEqual(code, 1)
+
+
+class TestMultiHost(unittest.TestCase):
+    def test_resolve_targets_accepts_a_comma_list(self):
+        self.assertEqual(installer.resolve_targets("dsh,codex"), ["dsh", "codex"])
+        self.assertEqual(installer.resolve_targets(" dsh , codex "), ["dsh", "codex"])
+
+    def test_resolve_targets_rejects_unknown_host(self):
+        with self.assertRaises(KeyError):
+            installer.resolve_targets("dsh,nope")
+
+    def test_resolve_targets_all_only_lists_existing_roots(self):
+        hosts = installer.resolve_targets("all")
+        self.assertTrue(hosts)
+        for host in hosts:
+            self.assertTrue(installer.host_root(host).exists(), host)
+
+    def test_install_many_reaches_every_target(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            roots = {}
+            for host in ("dsh", "codex"):
+                root = Path(tmp) / host
+                root.mkdir()
+                roots[host] = root
+            original = installer.HOSTS
+            installer.HOSTS = {host: (lambda r=root: r) for host, root in roots.items()}
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    code = installer.install_many("dsh,codex", force=False, dry_run=False, as_json=False)
+            finally:
+                installer.HOSTS = original
+            self.assertEqual(code, 0)
+            for host in ("dsh", "codex"):
+                target = roots[host] / installer.SKILL_NAME
+                self.assertEqual(installer.verify_install(target), [], host)
+
+    def test_same_skill_name_and_entries_for_every_host(self):
+        for host in installer.HOSTS:
+            self.assertEqual((installer.host_root(host) / installer.SKILL_NAME).name, "embedded-dev")
+        self.assertIn("SKILL.md", installer.RUNTIME_ENTRIES)
+        self.assertIn("references", installer.RUNTIME_ENTRIES)
+        self.assertIn("scripts", installer.RUNTIME_ENTRIES)
+
+    def test_installing_onto_the_source_checkout_is_refused(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = installer.install("dsh", installer.REPO_ROOT, force=True, dry_run=False, as_json=False)
+        self.assertEqual(code, 0)
+        self.assertTrue(installer.REPO_ROOT.joinpath("SKILL.md").is_file(), "source must survive")
+        self.assertTrue(installer.REPO_ROOT.joinpath("scripts", "embedded_dev.py").is_file())
+
+    def test_source_checkout_is_reported_as_skipped(self):
+        result = installer.install_one("dsh", installer.REPO_ROOT, force=True, dry_run=False)
+        self.assertTrue(result.get("skipped"))
+        self.assertFalse(result["errors"])
 
 
 if __name__ == "__main__":

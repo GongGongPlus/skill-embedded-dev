@@ -19,19 +19,21 @@ agent_created: true
 
 ## 工具层与证据契约（可执行优先，不只给命令）
 
-`scripts/embedded_dev.py` 把构建、烧录、串口、寄存器读回、故障解码、协议解析、HIL 验证、控制环分析、板级引脚映射和工程记忆固化为 12 个可执行子命令，统一退出码：`0` 成功、`1` 构建失败、`2` 烧录失败、`3` 检测到硬件故障、`4` 测试/串口/超时失败或证据歧义、`5` 停滞（同一失败签名且源码未变）、`6` 配置错误（缺工具、缺必填参数或多个候选不猜）。
+`scripts/embedded_dev.py` 把构建、烧录、串口、寄存器读回、故障解码、崩溃地址符号化、RTOS 栈水位、协议解析、HIL 验证、控制环分析、板级引脚映射和工程记忆固化为 14 个可执行子命令，统一退出码：`0` 成功、`1` 构建失败、`2` 烧录失败、`3` 检测到硬件故障、`4` 测试/串口/超时失败或证据歧义、`5` 停滞（同一失败签名且源码未变）、`6` 配置错误（缺工具、缺必填参数或多个候选不猜）。
 
 - 先 `env --json` 查清真实工具链、探针与串口，再决定路径；环境不明不猜。
 - 所有写硬件的命令先 `--dry-run`，确认命令行后再执行。
 - 烧录后端必须显式给出识别参数（`--openocd-interface`+`--openocd-target`、`--chip`+`--port`、`--target`、`--jlink-device` 等）；存在多探针/多后端歧义时脚本返回候选列表并退出 6，不自动选。
 - 真机验证顺序 `build → flash → monitor --expect <token>`；未捕获令牌即失败（退出 4）。`hil` 把这条链路一次跑完，并写 `diagnostic_report.json`（含失败签名、next_actions、ai_repair_prompt、repeated_failure、source_unchanged）；同一失败重复出现且源码未变时报 `STALLED`（退出 5）。
 - 故障先 `fault` / `regs` 解码 CFSR/HFSR/BFAR 与栈帧；带 `--elf` 时用 addr2line 把 PC/LR 解析到函数/行号（DWARF 门禁，缺工具即报配置错误），再谈复位。完成报告用 `report --file` 校验证据分级与命令记录，不合格即拒绝。
+- 只有裸地址（Xtensa/RISC-V 崩溃日志、只有 PC 没有寄存器）时用 `symbolize --elf --addr`，一个命令解析任意核；工具链按 ARM → Xtensa → RISC-V → 宿主顺序自动探测。
+- RTOS 栈水位用 `stack`：喂入 `vTaskList`/`uxTaskGetSystemState` 输出，按阈值标出低水位任务并退出 3；单位默认 StackType_t=4 字节，`--word-bytes` 可改。水位不足是硬件故障证据，不是"看起来还行"。
 - 串口/CAN 帧解析用 `decode`：先 `decode validate --spec` 验证 `embedded-protocol.v1` 规范，再解 UART 抓包或 candump 日志（ISO-TP 重组、UDS/NRC、OBD-II PID、J1939 PGN）；规范没写的位段保持 unknown，不猜。
 - 需要把工具暴露给其他 agent 运行时（Claude Code、Codex、DSH 等）时，用 `scripts/mcp_server.py` 的 stdio MCP 服务，不自造第二套命令。
 - 控制环调参用 `tune`：先 `tune analyze` 从遥测 CSV 算 IAE/MAE、尾偏差、超调、上升/稳定时间，再 `tune check-update` 校验有界更新（越界或超步长直接拒绝，不裁剪成另一个实验），`tune simulate` 可离线产生遥测供回归；只报告指标，不输出"已收敛/已安全"。
 - 板级事实用 `board`：`board controller --netlist` 从 KiCad XML 网表推主控与每脚连接（串联 R/L/ferrite 穿透、电容仅在两信号网间桥接、电源/地排除、DNP 标注），`board from-ioc` 读 CubeMX 引脚角色与复用风险；多主控歧义退出 4 不猜，PDF 网表拒绝而不是猜。
 - 工程记忆用 `memory`：`detect` 识别工程与芯片、`init` 建 `.embedded-dev/` 档案、`remember/search/show/list/forget` 存取带证据等级的条目；`已确认` 必须给 `--source`，版本冲突退出 4，`forget` 留墓碑防止同名重建冒充旧结论。
-- 多平台安装：`python scripts/install.py --list` 查看 DSH/Codex/Claude Code 等 skill 根目录，`--target dsh` 一键安装并校验。
+- 多平台安装：`python scripts/install.py --list` 逐个 host 做内容校验并显示版本漂移，`--target dsh,codex` 一条命令同步 DSH 与 Codex（`--target all` 覆盖所有已存在的 skill 根），`--verify-only --target all` 检查每一份副本。
 
 ## 铁律
 
@@ -45,6 +47,7 @@ agent_created: true
 - **高于 `configMAX_SYSCALL_INTERRUPT_PRIORITY` 的 ISR 禁调任何 FromISR API**（未定义行为）。
 - **控制环不做无界实验**：参数变更先声明 bounds 与 max_step，越界即拒绝而不是裁剪后继续；未在目标上复测前，不宣称已收敛、稳定或安全。
 - **结论不越证据范围**：配置、软件自报、推导量、直接观测四类证据不可混写；"编译通过/已烧录/串口有输出"各自只证明自己那一层（见 evidence-scope.md）。
+- **"已安装"必须是内容校验**：目录存在、README 写着能跑、宿主自报都不是证据；只有 `install.py --verify-only` 逐项核对运行时条目通过才算已安装。
 
 ## 固件编码 MUST / NOT
 

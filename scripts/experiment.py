@@ -19,9 +19,9 @@ import io
 import json
 import math
 import sys
-from dataclasses import dataclass
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 EXIT_OK = 0
 EXIT_DATA = 4
@@ -192,7 +192,7 @@ def split_segments(rows: Sequence[dict[str, Any]]) -> tuple[list[list[dict[str, 
 
 def _trapezoid(points: Sequence[tuple[float, float]]) -> float:
     total = 0.0
-    for (t0, v0), (t1, v1) in zip(points, points[1:]):
+    for (t0, v0), (t1, v1) in zip(points, points[1:], strict=False):
         total += (t1 - t0) * (v0 + v1) / 2.0
     return total
 
@@ -235,14 +235,16 @@ def compute_metrics(
         return metrics
 
     errors = [row["setpoint"] - row["input"] for row in segment]
-    absolute = [(t, abs(e)) for t, e in zip(times, errors)]
+    absolute = [(t, abs(e)) for t, e in zip(times, errors, strict=True)]
     iae = _trapezoid(absolute)
     metrics["iae"] = round(iae, 6)
     metrics["mae"] = round(iae / duration, 6)
 
     tail_start = duration * (1.0 - tail_fraction)
     tail_pairs = []
-    for (t0, e0), (t1, e1) in zip(zip(times, errors), zip(times[1:], errors[1:])):
+    for (t0, e0), (t1, e1) in zip(
+        zip(times, errors, strict=True), zip(times[1:], errors[1:], strict=True), strict=False
+    ):
         lo, hi = max(t0, tail_start), t1
         if hi <= lo:
             continue
@@ -315,7 +317,7 @@ def _rise_time(
     low = first_input + 0.1 * amplitude
     high = first_input + 0.9 * amplitude
     low_at = None
-    for row, t in zip(segment, times):
+    for row, t in zip(segment, times, strict=False):
         if low_at is None and (row["input"] >= low if amplitude > 0 else row["input"] <= low):
             low_at = t
         if low_at is not None and (row["input"] >= high if amplitude > 0 else row["input"] <= high):

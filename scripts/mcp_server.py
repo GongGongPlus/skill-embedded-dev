@@ -112,6 +112,31 @@ TOOLS: dict[str, dict] = {
         "json": True,
         "prefix": ["regs"],
     },
+    "symbolize": {
+        "description": (
+            "Resolve crash addresses to function:line with addr2line for Cortex-M, Xtensa or RISC-V builds. "
+            "Requires the ELF from the exact build on the board."
+        ),
+        "flags": {"elf": ("--elf", "value"), "addr": ("--addr", "value")},
+        "required": ["elf", "addr"],
+        "json": True,
+        "prefix": ["symbolize"],
+    },
+    "stack": {
+        "description": (
+            "Report FreeRTOS task stack watermarks from vTaskList / uxTaskGetSystemState output; "
+            "exits 3 when a task falls below the threshold."
+        ),
+        "flags": {
+            "tasklist": ("--tasklist", "value"),
+            "min_free": ("--min-free", "value"),
+            "word_bytes": ("--word-bytes", "value"),
+        },
+        "json": True,
+        "required": ["tasklist"],
+        "ok_exit": [0, 3],
+        "prefix": ["stack"],
+    },
     "fault": {
         "description": "Decode CFSR/HFSR/MMFAR/BFAR and fault addresses; optional ELF symbol resolution (DWARF gate).",
         "flags": {
@@ -308,7 +333,7 @@ def tools_list() -> list[dict]:
             properties["action"] = {"type": "string", "enum": list(action_enum)}
             if "action" not in required:
                 required.append("action")
-        for argument, (flag, kind) in spec["flags"].items():
+        for argument, (_, kind) in spec["flags"].items():
             if argument == "kind":
                 properties[argument] = {"type": "string", "enum": ["uart", "can", "validate"]}
             elif kind == "bool":
@@ -369,6 +394,8 @@ def self_test() -> int:
         "flash",
         "monitor",
         "regs",
+        "symbolize",
+        "stack",
         "report",
         "tune",
         "board",
@@ -376,8 +403,8 @@ def self_test() -> int:
     ):
         if required not in names:
             failures.append(f"tool {required} missing from tools/list")
-    if len(listed) != 12:
-        failures.append(f"tools/list has {len(listed)} tools, expected 12")
+    if len(listed) != 14:
+        failures.append(f"tools/list has {len(listed)} tools, expected 14")
     env = call_tool("env", {})
     if env.get("isError"):
         failures.append("tools/call env failed: " + env["content"][0]["text"][:200])

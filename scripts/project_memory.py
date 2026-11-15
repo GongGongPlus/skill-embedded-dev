@@ -29,9 +29,10 @@ import os
 import re
 import sys
 import time
+from collections.abc import Iterator, Sequence
 from datetime import datetime, timezone
 from pathlib import Path, PurePath
-from typing import Any, Iterator, Sequence
+from typing import Any
 
 EXIT_OK = 0
 EXIT_DATA = 4
@@ -299,7 +300,7 @@ def _state_lock(root: Path) -> Iterator[None]:
             if time.monotonic() > deadline:
                 raise ConfigError(
                     "memory state is locked by another session; wait a moment and retry"
-                )
+                ) from None
             time.sleep(0.05)
     try:
         yield

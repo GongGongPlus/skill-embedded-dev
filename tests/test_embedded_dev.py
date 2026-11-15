@@ -275,5 +275,100 @@ class TestCliSurface(unittest.TestCase):
                 ed.main(["nope"])
 
 
+TASKLIST = """
+Task          State  Prio  Stack  Num
+IDLE          R      0     120    3
+main          B      2     64     4
+sensor        B      3     900    5
+--------------
+"""
+
+
+class TestStackReport(unittest.TestCase):
+    def test_parse_tasklist_reads_free_words_and_state(self):
+        tasks = ed.parse_tasklist(TASKLIST)
+        self.assertEqual([task["name"] for task in tasks], ["IDLE", "main", "sensor"])
+        self.assertEqual(tasks[1]["free_words"], 64)
+        self.assertEqual(tasks[1]["state"], "B")
+
+    def test_parse_tasklist_skips_banners_and_short_lines(self):
+        text = "Task State Prio Stack Num\n-------\nnoise\n" + TASKLIST
+        tasks = ed.parse_tasklist(text)
+        self.assertEqual(len(tasks), 3)
+
+    def test_parse_tasklist_returns_empty_for_unrelated_text(self):
+        self.assertEqual(ed.parse_tasklist("boot ok\nheap 4096\n"), [])
+
+    def test_stack_flags_tasks_below_threshold(self):
+        code, out, _ = run_main(["stack", "--min-free", "128", "--json"])
+        self.assertNotEqual(code, ed.EXIT_OK, "stdin is empty, this must not claim success")
+
+    def test_stack_json_marks_below_threshold_tasks(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "tasklist.txt"
+            path.write_text(TASKLIST, encoding="utf-8")
+            code, out, _ = run_main(["stack", "--tasklist", str(path), "--min-free", "128", "--json"])
+        payload = json.loads(out)
+        self.assertEqual(code, ed.EXIT_FAULT)
+        self.assertEqual(payload["below_threshold"], ["IDLE", "main"])
+        self.assertEqual(payload["worst"]["name"], "main")
+        self.assertEqual(payload["worst"]["free_bytes"], 256)
+
+    def test_stack_passes_when_every_task_is_above_threshold(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "tasklist.txt"
+            path.write_text(TASKLIST, encoding="utf-8")
+            code, out, _ = run_main(["stack", "--tasklist", str(path), "--min-free", "16", "--json"])
+        self.assertEqual(code, ed.EXIT_OK)
+        self.assertEqual(json.loads(out)["below_threshold"], [])
+
+    def test_stack_word_bytes_is_respected(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "tasklist.txt"
+            path.write_text(TASKLIST, encoding="utf-8")
+            _, out, _ = run_main(["stack", "--tasklist", str(path), "--min-free", "16", "--word-bytes", "8", "--json"])
+        payload = json.loads(out)
+        self.assertEqual(payload["tasks"][2]["free_bytes"], 900 * 8)
+
+    def test_stack_missing_file_is_config_error(self):
+        code, _, err = run_main(["stack", "--tasklist", "does-not-exist.txt"])
+        self.assertEqual(code, ed.EXIT_CONFIG)
+        self.assertIn("cannot read", err)
+
+
+class TestSymbolize(unittest.TestCase):
+    def test_symbolize_requires_an_elf(self):
+        code, _, err = run_main(["symbolize", "--addr", "0x08000100"])
+        self.assertEqual(code, ed.EXIT_CONFIG)
+        self.assertIn("--elf", err)
+
+    def test_symbolize_requires_an_address(self):
+        code, _, err = run_main(["symbolize", "--elf", __file__])
+        self.assertEqual(code, ed.EXIT_CONFIG)
+        self.assertIn("at least one address", err)
+
+    def test_symbolize_rejects_unparsable_address(self):
+        code, _, err = run_main(["symbolize", "--elf", __file__, "--addr", "zzz"])
+        self.assertEqual(code, ed.EXIT_CONFIG)
+        self.assertIn("cannot parse address", err)
+
+    def test_symbolize_missing_elf_file_is_config_error(self):
+        code, _, err = run_main(["symbolize", "--elf", "nope.elf", "--addr", "0x08000100"])
+        self.assertEqual(code, ed.EXIT_CONFIG)
+        self.assertIn("not found", err)
+
+    def test_addr2line_candidates_cover_arm_xtensa_and_riscv(self):
+        candidates = ed.ENV_TOOLS["addr2line"]
+        self.assertTrue(any("arm-none-eabi" in name for name in candidates))
+        self.assertTrue(any("xtensa" in name for name in candidates))
+        self.assertTrue(any("riscv" in name for name in candidates))
+
+
 if __name__ == "__main__":
     unittest.main()

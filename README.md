@@ -1,18 +1,18 @@
 # 嵌入式与固件开发 / Embedded and Firmware Development
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.6.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.7.0-blue.svg)](CHANGELOG.md)
 [![Tests](https://img.shields.io/badge/tests-unittest-4c1.svg)](.github/workflows/tests.yml)
 [![Codex Skill](https://img.shields.io/badge/Codex-Skill-black.svg)](SKILL.md)
 
 > 面向 MCU、外设、RTOS、故障定位、Bootloader、控制环调参、板级事实核对与真机验证的嵌入式开发 Skill，
-> 自带可执行的 build / flash / monitor / regs / fault / decode / hil / tune / board / memory 工具层、
+> 自带可执行的 build / flash / monitor / regs / symbolize / stack / fault / decode / hil / tune / board / memory 工具层、
 > 证据契约与 MCP 服务。
 >
 > An embedded-development skill for MCUs, peripherals, RTOS work, fault diagnosis,
 > bootloaders, control-loop tuning, board-fact verification, and hardware validation,
-> with an executable build/flash/monitor/regs/fault/decode/hil/tune/board/memory tool
-> layer, an evidence contract, and an MCP server.
+> with an executable build/flash/monitor/regs/symbolize/stack/fault/decode/hil/tune/board/memory
+> tool layer, an evidence contract, and an MCP server.
 
 ## 中文介绍
 
@@ -45,6 +45,8 @@ python scripts/embedded_dev.py flash --image build/firmware.elf --backend openoc
   --openocd-interface interface/cmsis-dap.cfg --openocd-target target/stm32f1x.cfg --dry-run
 python scripts/embedded_dev.py monitor --port COM7 --baud 115200 --expect "TEST_PASSED"
 python scripts/embedded_dev.py regs --from-text regs.txt --json
+python scripts/embedded_dev.py symbolize --elf build/firmware.elf --addr 0x08000123 --addr 0x0800abcd
+python scripts/embedded_dev.py stack --tasklist tasklist.txt --min-free 512 --json
 python scripts/embedded_dev.py fault --cfsr 0x8200 --bfar 0x20000100
 python scripts/embedded_dev.py fault --cfsr 0x8200 --pc 0x08000123 --elf build/firmware.elf
 python scripts/embedded_dev.py decode validate --spec examples/protocols/uart-env-sensor.json
@@ -79,31 +81,39 @@ python scripts/embedded_dev.py memory remember --project . --title "UART1 115200
 | `board` | KiCad XML 网表→主控引脚映射（串联件穿透、电源地排除、DNP 标注、歧义退出 4）；CubeMX `.ioc`→引脚角色与复用风险；PDF 拒绝 |
 | `memory` | 工程识别、`.embedded-dev/` 档案、带证据等级的 remember/search/list/forget、版本冲突与墓碑 |
 | `report` | 校验完成报告契约（证据等级、命令、风险、下一步） |
+| `symbolize` | 裸地址符号化：Cortex-M/Xtensa/RISC-V 崩溃地址 → 函数:行号，自动探测 addr2line 工具链 |
+| `stack` | FreeRTOS 栈水位：解析 `vTaskList`/`uxTaskGetSystemState`，按阈值标出低水位任务并退出 3 |
 
 统一退出码：`0` 成功、`1` 构建失败、`2` 烧录失败、`3` 检测到硬件故障、
 `4` 测试/串口/超时失败、`5` 停滞（同一失败签名且源码未变）、`6` 配置错误（缺工具、缺必填参数或多个候选）。
 
-`scripts/mcp_server.py` 把同一套 12 个工具经 stdio JSON-RPC 暴露给支持 MCP 的宿主（Claude Code、Codex、
+`scripts/mcp_server.py` 把同一套 14 个工具经 stdio JSON-RPC 暴露给支持 MCP 的宿主（Claude Code、Codex、
 DSH 等），不再维护第二套命令；`--self-test` 可离线验证工具面与 JSON-RPC 契约。
 
-### 一键安装 / 多平台
+### 一键安装 / 多平台（DSH + Codex）
 
 ```bash
-python scripts/install.py --list                 # 查看 DSH/Codex/Claude Code 等 skill 根目录
-python scripts/install.py --target dsh            # 安装到 ~/.dsh/skills/embedded-dev
-python scripts/install.py --target codex          # ~/.codex/skills/embedded-dev
-python scripts/install.py --target claude         # ~/.claude/skills/embedded-dev
-python scripts/install.py --target project        # 当前工程 .dsh/skills/embedded-dev
-python scripts/install.py --verify-only --target dsh
+python scripts/install.py --list                       # 每个 host 做内容校验 + 版本漂移提示
+python scripts/install.py --target dsh,codex --force    # 一条命令同步 DSH 与 Codex
+python scripts/install.py --target all --force          # 所有已存在的 skill 根目录
+python scripts/install.py --target dsh                  # 仅 ~/.dsh/skills/embedded-dev
+python scripts/install.py --target codex                # 仅 ~/.codex/skills/embedded-dev
+python scripts/install.py --target project              # 当前工程 .dsh/skills/embedded-dev
+python scripts/install.py --verify-only --target all    # 逐 host 校验，任一不合格退出非 0
 ```
 
-安装会校验 `SKILL.md` frontmatter、references、工具脚本是否齐全；安装后新开一个会话，
-让宿主重新发现 skill 目录。
+校验是内容级的：`SKILL.md` frontmatter、`references/*.md`、`scripts/embedded_dev.py`、
+`scripts/install.py`、`VERSION` 与文档引用的 `examples/` 逐项核对，缺项会点名报出。
+`--force` 只替换运行时条目，保留 `.git`、`tests/` 与宿主自己的元数据，因此对 git clone
+式安装也安全。安装后新开一个会话，让宿主重新发现 skill 目录。
 
 也可以手动 clone 到对应 skill 根目录：
 
 ```powershell
+# Codex
 git clone https://github.com/GongGongPlus/skill-embedded-dev.git "$env:USERPROFILE\.codex\skills\embedded-dev"
+# DSH
+git clone https://github.com/GongGongPlus/skill-embedded-dev.git "$env:USERPROFILE\.dsh\skills\embedded-dev"
 ```
 
 ### 适用场景
@@ -254,17 +264,15 @@ skill-embedded-dev/
 |   |-- wireless.md
 |   |-- zephyr-linux.md
 |-- scripts/
-|   |-- embedded_dev.py         # 工具层 CLI（12 子命令）
+|   |-- embedded_dev.py         # 工具层 CLI（14 子命令）
 |   |-- experiment.py           # 控制环遥测指标/有界更新/仿真/trial record
 |   |-- board_map.py            # 网表+ioc→主控引脚映射
 |   |-- project_memory.py       # 工程识别与证据化记忆
 |   |-- protocol_decode.py      # UART 规范解码 + ISO-TP/UDS/OBD-II/J1939
-|   |-- mcp_server.py           # stdio MCP 服务（暴露同一套工具）
-|   |-- install.py              # 多平台一键安装/校验
+|   |-- mcp_server.py           # stdio MCP 服务（暴露同一套 14 个工具）
+|   |-- install.py              # 多平台一键安装/内容校验（dsh、codex 等）
 |   |-- report_schema.json      # 完成报告契约
 |   |-- diagnostic_report_schema.json  # HIL 诊断报告契约
-|   |-- fault_decode.sh
-|   |-- stack_report.py
 |-- tests/                      # CLI、协议解码、MCP、HIL、安装器、仓库元数据与文档链接测试
 |-- CHANGELOG.md
 |-- SKILL.md

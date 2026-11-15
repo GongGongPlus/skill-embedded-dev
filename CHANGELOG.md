@@ -7,6 +7,51 @@ All notable changes to this repository are documented here. The format follows
 Agent Skills are consumed by an LLM, so the version number also tells the agent
 whether it is looking at the same contract as an earlier session.
 
+## [0.7.0] - 2026-11-15
+
+### Added
+
+- `embedded_dev.py stack`: FreeRTOS task stack watermark report from `vTaskList` /
+  `uxTaskGetSystemState` output. Flags every task below `--min-free` words, honours
+  `--word-bytes` for a non-`uint32_t` `StackType_t`, and exits 3 (target fault) instead
+  of 0 when a watermark is under the threshold, so a low stack cannot be reported as a
+  clean run.
+- `embedded_dev.py symbolize`: resolve bare crash addresses from any core (Cortex-M,
+  Xtensa, RISC-V) through `addr2line`. `ENV_TOOLS["addr2line"]` now probes
+  `arm-none-eabi`, `xtensa-esp32s3-elf`, `xtensa-esp32-elf`, `riscv32-esp-elf` and the
+  host tool, in that order.
+- `install.py --target dsh,codex` / `--target all` / `--verify-only --target all`:
+  install and verify several host skill roots in one command, with per-host results.
+- `pyproject.toml` with a ruff configuration (`E4,E7,E9,F,B,I,UP`, `py310` target) and
+  a CI lint step, closing the gap between the skill's `-Wall -Werror` rule and its own
+  Python tooling.
+
+### Changed
+
+- `install.py` verification is now content-based. `--list` runs `verify_install` on
+  every host and reports `valid`, the installed `version`, whether it matches the
+  source, and the exact missing entries. A directory that merely exists is no longer
+  reported as installed, and a stale copy is called out as INVALID/OUTDATED instead of
+  passing silently.
+- `--force` replaces only `RUNTIME_ENTRIES`; `.git`, `tests/` and host-owned files
+  survive, so force-updating a git clone no longer deletes its history.
+- `install.py` `verify_install` also checks `VERSION` and names each missing runtime
+  entry instead of a partial script/fixture list.
+
+### Removed
+
+- `scripts/stack_report.py` and `scripts/fault_decode.sh`. Both were named only in the
+  README tree, unreachable from `SKILL.md`, and untested; their behaviour now lives in
+  `stack` and `symbolize`, which are covered by tests, reachable through the main CLI
+  and listed in the MCP tool surface.
+
+### Fixed
+
+- The MCP surface grew from 12 to 14 tools (`stack`, `symbolize`) with the self-test
+  expectation updated to match, so the CLI, MCP server and docs agree on one surface.
+- Unused imports, `zip()` without `strict=`, a bare `raise` in `project_memory.py` and
+  a shadowed loop variable in `mcp_server.py` are resolved; `ruff check` is clean.
+
 ## [0.6.0] - 2026-11-15
 
 ### Added

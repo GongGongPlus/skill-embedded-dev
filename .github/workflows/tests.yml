@@ -25,7 +25,10 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install optional serial dependency
-        run: python -m pip install --disable-pip-version-check pyserial
+        run: python -m pip install --disable-pip-version-check pyserial ruff
+
+      - name: Lint (ruff)
+        run: python -m ruff check scripts tests
 
       - name: Unit and repository-lint tests
         run: python -m unittest discover -s tests -v
@@ -91,13 +94,31 @@ jobs:
           python scripts/install.py --list --json
           python scripts/install.py --target project --dry-run --json
 
-      - name: Verify an installed copy
+      - name: Stack report and symbol resolution contracts
+        shell: bash
+        run: |
+          set -e
+          printf 'Task State Prio Stack Num\nmain B 2 64 4\nsensor B 3 900 5\n' > "$RUNNER_TEMP/tasklist.txt"
+          set +e
+          python scripts/embedded_dev.py stack --tasklist "$RUNNER_TEMP/tasklist.txt" --min-free 128 --json
+          code=$?
+          set -e
+          test "$code" -eq 3 || { echo "expected EXIT_FAULT(3) for a low watermark, got $code"; exit 1; }
+          set +e
+          python scripts/embedded_dev.py symbolize --addr 0x08000100
+          code=$?
+          set -e
+          test "$code" -eq 6 || { echo "expected EXIT_CONFIG(6) without --elf, got $code"; exit 1; }
+
+      - name: Install two host copies and verify both
         shell: bash
         run: |
           set -e
           tmp=$(mktemp -d)
-          python scripts/install.py --dest "$tmp/embedded-dev" --json
-          python scripts/install.py --dest "$tmp/embedded-dev" --verify-only
+          python scripts/install.py --dest "$tmp/dsh-copy" --json
+          python scripts/install.py --dest "$tmp/codex-copy" --json
+          python scripts/install.py --dest "$tmp/dsh-copy" --verify-only
+          python scripts/install.py --dest "$tmp/codex-copy" --verify-only
 
   docs:
     name: docs link check

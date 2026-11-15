@@ -19,8 +19,9 @@ import json
 import re
 import sys
 import xml.etree.ElementTree as ET
+from collections.abc import Iterable, Sequence
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 EXIT_OK = 0
 EXIT_DATA = 4
