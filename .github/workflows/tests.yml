@@ -1,0 +1,83 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.10", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install optional serial dependency
+        run: python -m pip install --disable-pip-version-check pyserial
+
+      - name: Unit and repository-lint tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Compile check
+        run: python -m compileall -q scripts tests
+
+      - name: CLI help
+        run: python scripts/embedded_dev.py --help
+
+      - name: Environment report (JSON contract)
+        run: python scripts/embedded_dev.py env --json
+
+      - name: Dry-run build and flash (no hardware)
+        shell: bash
+        run: |
+          python scripts/embedded_dev.py build --project examples/stm32-openocd --backend cmake --dry-run
+          python scripts/embedded_dev.py flash --image build/firmware.elf --backend openocd \
+            --openocd-interface interface/cmsis-dap.cfg --openocd-target target/stm32f1x.cfg --dry-run
+
+      - name: Refuse to guess a backend
+        shell: bash
+        run: |
+          set +e
+          python scripts/embedded_dev.py flash --image fw.bin --backend esptool --dry-run
+          code=$?
+          set -e
+          test "$code" -eq 6 || { echo "expected EXIT_CONFIG(6), got $code"; exit 1; }
+
+      - name: Report contract smoke test
+        run: python scripts/embedded_dev.py report --emit-example --json
+
+      - name: Installer dry-run and host detection
+        run: |
+          python scripts/install.py --list --json
+          python scripts/install.py --target project --dry-run --json
+
+      - name: Verify an installed copy
+        shell: bash
+        run: |
+          set -e
+          tmp=$(mktemp -d)
+          python scripts/install.py --dest "$tmp/embedded-dev" --json
+          python scripts/install.py --dest "$tmp/embedded-dev" --verify-only
+
+  docs:
+    name: docs link check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Markdown relative links resolve
+        run: python -m unittest tests.test_repo_lint.TestMarkdownLinks -v

@@ -1,6 +1,6 @@
 ---
 name: embedded-dev
-description: "嵌入式/固件开发全流程专家：单片机 MCU 固件、STM32/ESP32/nRF/裸机、FreeRTOS/Zephyr、外设驱动（UART/I2C/SPI/CAN/ADC/DMA）、HardFault 死机复位排查、RTOS 并发与栈、bootloader/OTA、内存与链接优化、真机烧录验证。当用户做嵌入式开发、写驱动、调外设、排查死机、或提到 MCU/固件/开发板/单片机/示波器/逻辑分析仪/烧录时使用。Use when developing MCU firmware, drivers, debugging HardFault, RTOS issues, or flashing real hardware."
+description: "嵌入式/固件开发全流程专家：单片机 MCU 固件、STM32/ESP32/nRF/裸机、FreeRTOS/Zephyr、外设驱动（UART/I2C/SPI/CAN/ADC/DMA）、HardFault 死机复位排查、RTOS 并发与栈、bootloader/OTA、内存与链接优化、MISRA 静态检查、单元测试与 CI 烧录、真机烧录验证。当用户做嵌入式开发、写驱动、调外设、排查死机、要过 MISRA/写测试/搭自动化烧录、或提到 MCU/固件/开发板/单片机/示波器/逻辑分析仪/烧录时使用。Use when developing MCU firmware, drivers, debugging HardFault, RTOS issues, MISRA compliance, unit testing, CI flashing, or flashing real hardware."
 agent_created: true
 ---
 
@@ -13,9 +13,20 @@ agent_created: true
 1. **上下文**：查看工程文件、芯片型号（勿按板卡品牌猜型号，从 probe/丝印/数据手册确认）、SDK/工具链版本、板卡版本、原理图或引脚表、日志。缺关键信息时先问，最多问 3 个会影响技术决策的问题；问不到就标注"未知"，禁止编造寄存器值、时钟频率、引脚号。
 2. **契约**：写下硬件身份、供电/复位/时钟、引脚与总线归属、时序、内存预算、并发模型、验收标准。接口先冻结再写实现。
 3. **实现**：应用层 / 驱动(HAL)层 / 平台层分离；优先用厂商 SDK 现成 API 与工程既有风格；生成代码（CubeMX .ioc、Zephyr DT/Kconfig）是配置证据，改配置重生成后 diff 检查，不手改生成产物。
-4. **构建**：干净构建 + 零警告（`-Wall -Werror`）+ 静态检查（cppcheck 等）。编译通过 ≠ 运行正确。
+4. **构建**：干净构建 + 零警告（`-Wall -Werror`）+ 静态检查（cppcheck 等；MISRA/单测/CI 门禁见 quality-gate.md）。编译通过 ≠ 运行正确。
 5. **真机验证**：`build → flash → monitor → test`，亲眼看串口输出/测量数据才能声称完成。无硬件时明确说"未做真机验证"并给出下一个可执行实验，不得宣称完成。
 6. **记录**：按"完成报告"格式收尾（见下）。
+
+## 工具层与证据契约（可执行优先，不只给命令）
+
+`scripts/embedded_dev.py` 把构建、烧录、串口、寄存器读回和故障解码固化为可执行命令，统一退出码：`0` 正常、`1` 工具错误、`2` 构建失败、`3` 检测到故障、`4` 设备/测试失败、`5` 超时、`6` 配置错误（缺工具或缺必填参数）。
+
+- 先 `env --json` 查清真实工具链、探针与串口，再决定路径；环境不明不猜。
+- 所有写硬件的命令先 `--dry-run`，确认命令行后再执行。
+- 烧录后端必须显式给出识别参数（`--openocd-interface`+`--openocd-target`、`--chip`+`--port`、`--target`、`--jlink-device` 等）；存在多探针/多后端歧义时脚本返回候选列表并退出 6，不自动选。
+- 真机验证顺序 `build → flash → monitor --expect <token>`；未捕获令牌即失败（退出 4）。
+- 故障先 `fault` / `regs` 解码 CFSR/HFSR/BFAR 与栈帧，再谈复位；完成报告用 `report --file` 校验证据分级与命令记录，不合格即拒绝。
+- 多平台安装：`python scripts/install.py --list` 查看 DSH/Codex/Claude Code 等 skill 根目录，`--target dsh` 一键安装并校验。
 
 ## 铁律
 
@@ -54,9 +65,16 @@ NOT：
 | 启动失败、向量表、链接/内存优化、bootloader/OTA | "烧完就没反应/变砖" "升级完开不了机" | [memory-boot.md](references/memory-boot.md) — 向量表征验、map 文件、跳转漏洞、OTA 矩阵 |
 | 烧录/交付前确认"上电即跑"；任务创建失败死锁；功能静默不执行 | "能跑吗/上电直接能用？" "跑着跑着全卡住" "自动功能没反应" | [power-on-checklist.md](references/power-on-checklist.md) — 七维自检、堆余量铁律、重复符号、数据源有效位 |
 | STM32/ESP32/nRF/嵌入式 Linux 平台特定坑 | "Wi-Fi 老掉线" "HAL 时基不对" | [platforms.md](references/platforms.md) — CubeMX/ESP-IDF/nRF/Zephyr 注意事项 |
+| 要过 MISRA/甲方静态检查、补单元测试、把编译-测试-烧录做成 CI | "要有测试/要过静态检查" "能不能自动烧录" | [quality-gate.md](references/quality-gate.md) — MISRA 高频规则与偏离模板、Unity/Ceedling 单测分层、自托管 runner 烧录与 HIL 门禁 |
+| 引脚接错/板卡不确定/上电异常/电平或启动模式问题 | "这个脚能接吗" "换了块板就不行" | [board-pinouts.md](references/board-pinouts.md) — 常见板卡引脚表、strapping/仅输入/flash 占用、三源核对规则 |
+| RISC-V 芯片（ESP32-C3/C6、GD32VF103、CH32V003 等）死机/异常 | "RISC-V 上跑飞了" | [riscv.md](references/riscv.md) — CSR 模型、mcause/mtval 映射、trap 现场抓取 |
+| Zephyr 构建/设备树/Kconfig，或嵌入式 Linux 外设不工作 | "west 烧不进去" "i2cdetect 看不到" | [zephyr-linux.md](references/zephyr-linux.md) — west/DT/Kconfig 工作流、Linux 外设分层排查 |
+| BLE/Wi-Fi/LoRa/2.4G 连不上、掉线、距离短、功耗高 | "蓝牙搜不到" "Wi-Fi 老掉线" | [wireless.md](references/wireless.md) — 无线五步分诊、配参与抓包、天线与共存 |
 
-外部按需查询：厂商手册细节（寄存器位段、errata）不内置，可定向检索 ima 知识库「STM32开发资料」「裸机思维」「嵌入式软件开发」，仅取实战结论，手册参数仍以官方 datasheet 为准。
+外部查询边界：厂商手册细节（寄存器位段、errata）不内置；需要时以官方 datasheet / reference manual / errata 为唯一依据，工具输出与第三方资料只能作为线索，不得作为参数来源。
 
 ## 完成报告格式
 
 收尾必须包含：改动的文件与版本；路由与依据；执行的命令与测试结果；每个关键结论的证据等级；跳过的检查及原因；遗留风险；一个具体的下一步。
+
+可运行示例与现场案例见 [examples/stm32-openocd/README.md](examples/stm32-openocd/README.md) 与 [examples/cases/01-hardfault-bfar.md](examples/cases/01-hardfault-bfar.md)。
