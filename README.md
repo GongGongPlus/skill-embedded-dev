@@ -1,17 +1,18 @@
 # 嵌入式与固件开发 / Embedded and Firmware Development
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.5.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.6.0-blue.svg)](CHANGELOG.md)
 [![Tests](https://img.shields.io/badge/tests-unittest-4c1.svg)](.github/workflows/tests.yml)
 [![Codex Skill](https://img.shields.io/badge/Codex-Skill-black.svg)](SKILL.md)
 
-> 面向 MCU、外设、RTOS、故障定位、Bootloader 与真机验证的嵌入式开发 Skill，
-> 自带可执行的 build / flash / monitor / regs / fault / decode / hil 工具层、
+> 面向 MCU、外设、RTOS、故障定位、Bootloader、控制环调参、板级事实核对与真机验证的嵌入式开发 Skill，
+> 自带可执行的 build / flash / monitor / regs / fault / decode / hil / tune / board / memory 工具层、
 > 证据契约与 MCP 服务。
 >
 > An embedded-development skill for MCUs, peripherals, RTOS work, fault diagnosis,
-> bootloaders, and hardware validation, with an executable build/flash/monitor/
-> regs/fault/decode/hil tool layer, an evidence contract, and an MCP server.
+> bootloaders, control-loop tuning, board-fact verification, and hardware validation,
+> with an executable build/flash/monitor/regs/fault/decode/hil/tune/board/memory tool
+> layer, an evidence contract, and an MCP server.
 
 ## 中文介绍
 
@@ -26,8 +27,11 @@
 - BLE/Wi-Fi/LoRa/2.4 GHz 的配置、抓包、天线与功耗分诊
 - 串口协议从规范到解码：切帧、长度/校验、类型/缩放、枚举与位域；CAN 侧 ISO-TP 重组与 UDS/OBD-II/J1939 解码
 - 用 HIL 闭环（构建→烧录→串口令牌→诊断报告）判断真机通过/失败，并识别重复失败与停滞
+- 控制环/PID 调参：从遥测 CSV 计算 IAE/MAE、尾偏差、超调、上升/稳定时间，校验有界更新（越界拒绝而不裁剪），离线仿真产生回归数据
+- 从 KiCad XML 网表推主控与每脚连接、从 CubeMX `.ioc` 读引脚角色与复用风险；歧义候选退出 4 不猜
+- 用带证据等级的工程记忆（`.embedded-dev/`）跨会话交接工程事实与调试结论，版本冲突与墓碑防误用
 - 通过 MISRA 静态检查、编写 host/目标板单元测试、把编译-测试-烧录做成 CI 门禁
-- 区分源码检查、编译、烧录与真实硬件证据，报告必须带证据等级
+- 区分配置、软件自报、推导量与直接观测，结论范围不超过证据范围
 
 ### 可执行工具层
 
@@ -51,6 +55,14 @@ python scripts/embedded_dev.py hil --project examples/stm32-openocd --image buil
   --build-backend cmake --flash-backend openocd --openocd-interface interface/cmsis-dap.cfg \
   --openocd-target target/stm32f1x.cfg --mock-file mock.txt --expect "TEST_PASSED"
 python scripts/embedded_dev.py report --file report.json
+python scripts/embedded_dev.py tune analyze --csv examples/control/response.csv
+python scripts/embedded_dev.py tune check-update --file examples/control/proposal.json
+python scripts/embedded_dev.py tune simulate --config examples/control/thermal-demo.json --out build/thermal.csv
+python scripts/embedded_dev.py board controller --netlist examples/board/demo.kicadxml
+python scripts/embedded_dev.py board from-ioc --file examples/board/demo.ioc
+python scripts/embedded_dev.py memory detect --project examples/board
+python scripts/embedded_dev.py memory remember --project . --title "UART1 115200 8N1" \
+  --content "PA9/PA10，8N1 无流控" --evidence-level 已确认 --source "demo.ioc"
 ```
 
 | 子命令 | 作用 |
@@ -63,12 +75,15 @@ python scripts/embedded_dev.py report --file report.json
 | `fault` | 由 CFSR/HFSR/地址/PC 生成根因提示与下一步；`--elf` 走 addr2line（DWARF 门禁） |
 | `decode` | `serial_protocol.v1` 规范校验、UART 抓包解码、candump 的 ISO-TP/UDS/OBD-II/J1939 解码 |
 | `hil` | 构建→烧录→串口令牌→`diagnostic_report.json`；识别重复失败，源码未变报 `STALLED` |
+| `tune` | 控制环遥测指标（IAE/MAE、尾偏差、超调、上升/稳定时间）；有界更新校验（越界拒绝、不裁剪）；一阶对象离线仿真；trial record 校验（拒绝 `converged=true`） |
+| `board` | KiCad XML 网表→主控引脚映射（串联件穿透、电源地排除、DNP 标注、歧义退出 4）；CubeMX `.ioc`→引脚角色与复用风险；PDF 拒绝 |
+| `memory` | 工程识别、`.embedded-dev/` 档案、带证据等级的 remember/search/list/forget、版本冲突与墓碑 |
 | `report` | 校验完成报告契约（证据等级、命令、风险、下一步） |
 
 统一退出码：`0` 成功、`1` 构建失败、`2` 烧录失败、`3` 检测到硬件故障、
 `4` 测试/串口/超时失败、`5` 停滞（同一失败签名且源码未变）、`6` 配置错误（缺工具、缺必填参数或多个候选）。
 
-`scripts/mcp_server.py` 把同一套工具经 stdio JSON-RPC 暴露给支持 MCP 的宿主（Claude Code、Codex、
+`scripts/mcp_server.py` 把同一套 12 个工具经 stdio JSON-RPC 暴露给支持 MCP 的宿主（Claude Code、Codex、
 DSH 等），不再维护第二套命令；`--self-test` 可离线验证工具面与 JSON-RPC 契约。
 
 ### 一键安装 / 多平台
@@ -93,8 +108,8 @@ git clone https://github.com/GongGongPlus/skill-embedded-dev.git "$env:USERPROFI
 
 ### 适用场景
 
-单片机固件、驱动开发、RTOS 故障、Bootloader/OTA、板级联调、无线联调、Zephyr/Linux 集成，
-以及需要把构建-烧录-验证固化成可重复流程的工程。
+单片机固件、驱动开发、RTOS 故障、Bootloader/OTA、板级联调、无线联调、控制环/PID 调参、
+Zephyr/Linux 集成、跨会话工程交接，以及需要把构建-烧录-验证固化成可重复流程的工程。
 
 ### 设计方式
 
@@ -106,6 +121,8 @@ git clone https://github.com/GongGongPlus/skill-embedded-dev.git "$env:USERPROFI
 
 - `examples/stm32-openocd/`：裸机 STM32F103C8 + CMake/GNU Arm + OpenOCD 的最小真机冒烟工程
 - `examples/protocols/`：`serial_protocol.v1` 规范、UART 抓包、candump（UDS/OBD-II）与解码演示
+- `examples/control/`：遥测 CSV、有界 PID 更新、一阶对象离线仿真与指标演示
+- `examples/board/`：KiCad XML 网表与 `.ioc` 的引脚映射、主控检测、串联件追踪演示
 - `examples/cases/01-hardfault-bfar.md`：BusFault/BFAR 现场定位
 - `examples/cases/02-uart-token-hil.md`：串口令牌 HIL 通过/失败门禁
 - `examples/cases/03-i2c-bus-dead.md`：I2C 总线死锁的分层排查
@@ -118,13 +135,14 @@ python -m compileall -q scripts tests
 ```
 
 GitHub Actions（`.github/workflows/tests.yml`）在 Ubuntu/Windows/macOS × Python 3.10/3.12
-上运行单元测试、编译检查、CLI 帮助、dry-run 冒烟、协议解码示例、MCP self-test、HIL dry-run、
-报告契约、安装器校验与文档相对链接检查。
+上运行单元测试、编译检查、CLI 帮助、dry-run 冒烟、协议解码示例、控制环/板级/工程记忆示例、
+MCP self-test、HIL dry-run、报告契约、安装器校验与文档相对链接检查。
 
 ### 证据与边界
 
 未连接并验证真机时，不声称烧录成功、波形正确或机构已运动；eFuse、Option Bytes 等不可逆
-操作必须再次确认；所有结论必须带证据等级（已确认 / 工程推论 / 估算 / 待验证 / 数据不足）。
+操作必须再次确认；所有结论必须带证据等级（已确认 / 工程推论 / 估算 / 待验证 / 数据不足），
+结论范围不超过证据范围（见 `references/evidence-scope.md`）。
 
 本仓库提供工作流与判断框架，不替代官方规则、专业认证、生产环境审批或真实设备验证。执行
 涉及资金、硬件熔丝、生产部署、外部提交等高风险操作前，必须取得明确授权。
@@ -142,19 +160,26 @@ GitHub Actions（`.github/workflows/tests.yml`）在 Ubuntu/Windows/macOS × Pyt
 - Triage BLE, Wi-Fi, LoRa/LoRaWAN, and 2.4 GHz configuration, captures, antenna, and power
 - Turn a serial protocol specification into framed decode: header/length/checksum, typed fields, scale/value offset, enums/bits; decode CAN ISO-TP, UDS, OBD-II, and J1939
 - Close the hardware loop with HIL (build -> flash -> UART token -> diagnostic report) and detect repeated failures and stalls
+- Tune control loops/PID from telemetry: IAE/MAE, tail bias, overshoot, rise/settling time; validate bounded updates (reject instead of clipping) and simulate a first-order plant offline
+- Build a controller pin map from KiCad XML netlists (series passives traced, power/ground excluded, DNP flagged, ambiguity exits 4) and read pin roles/reuse risks from a CubeMX `.ioc`; PDF netlists are refused
+- Keep an evidence-graded project memory (`.embedded-dev/`) for cross-session handoff, with version conflicts and tombstones
 - Enforce MISRA static checks, write host/target unit tests, and gate build-test-flash in CI
-- Keep source review, build, flash, and physical hardware evidence separate and labeled
+- Keep configuration, software self-report, derived values, and direct observations separate, with conclusions bounded by their evidence
 
 ### Tool layer
 
 `scripts/embedded_dev.py` provides `env`, `build`, `flash`, `monitor`, `regs`, `fault`,
-`decode`, `hil`, and `report` subcommands with a stable exit-code contract (`0` ok,
-`1` build failed, `2` flash failed, `3` fault detected, `4` device/test/serial failure,
-`5` stalled, `6` configuration error). Every hardware-writing command is dry-run first and
-every flash backend requires its explicit identifying options; ambiguous probes or
-backends return candidates instead of guessing. `hil` writes `diagnostic_report.json`
-with a failure signature, `next_actions`, `ai_repair_prompt`, `repeated_failure`, and
-`source_unchanged`, turning the same signature on unchanged sources into `STALLED`.
+`decode`, `hil`, `tune`, `board`, `memory`, and `report` subcommands with a stable
+exit-code contract (`0` ok, `1` build failed, `2` flash failed, `3` fault detected,
+`4` device/test/serial failure or ambiguous evidence, `5` stalled, `6` configuration
+error). Every hardware-writing command is dry-run first and every flash backend requires
+its explicit identifying options; ambiguous probes or backends return candidates instead
+of guessing. `hil` writes `diagnostic_report.json` with a failure signature,
+`next_actions`, `ai_repair_prompt`, `repeated_failure`, and `source_unchanged`, turning
+the same signature on unchanged sources into `STALLED`. `tune` reports loop metrics and
+rejects out-of-bounds or oversized updates without clipping; `board` derives pin maps
+from netlists and refuses ambiguous controllers; `memory` stores evidence-graded project
+facts with a required source for verified entries.
 
 `scripts/mcp_server.py` exposes the same tools over stdio JSON-RPC MCP, and its
 `--self-test` verifies the tool surface offline.
@@ -183,9 +208,10 @@ entire knowledge base into context. Repeatable, verifiable mechanical work belon
 
 `examples/stm32-openocd/` is a minimal bare-metal STM32F103C8 build (CMake, GNU Arm,
 OpenOCD). `examples/protocols/` contains a validated UART specification, a capture, a
-candump log with UDS/OBD-II traffic, and decode walkthroughs. `examples/cases/` contains
-three field-case walkthroughs: HardFault/BFAR capture, UART-token HIL gating, and dead
-I2C bus triage.
+candump log with UDS/OBD-II traffic, and decode walkthroughs. `examples/control/` has a
+telemetry CSV, a bounded PID proposal, and a thermal demo. `examples/board/` has a KiCad
+XML netlist and a `.ioc` for the same board. `examples/cases/` contains three field-case
+walkthroughs: HardFault/BFAR capture, UART-token HIL gating, and dead I2C bus triage.
 
 ### Evidence boundary
 
@@ -207,14 +233,20 @@ skill-embedded-dev/
 |   |-- README.md
 |   |-- stm32-openocd/          # 裸机 STM32F103 示例：CMake、startup、linker、openocd.cfg
 |   |-- protocols/              # serial_protocol.v1 规范、UART 抓包、candump 与解码演示
+|   |-- control/                # 遥测 CSV、有界 PID 更新、一阶对象仿真
+|   |-- board/                  # KiCad 网表与 .ioc 引脚映射演示
 |   |-- cases/                  # 三个现场案例
 |-- references/
+|   |-- board-facts.md
 |   |-- board-pinouts.md
+|   |-- control-tuning.md
+|   |-- evidence-scope.md
 |   |-- fault-debug.md
 |   |-- memory-boot.md
 |   |-- peripheral-bringup.md
 |   |-- platforms.md
 |   |-- power-on-checklist.md
+|   |-- project-memory.md
 |   |-- protocols.md
 |   |-- quality-gate.md
 |   |-- riscv.md
@@ -222,7 +254,10 @@ skill-embedded-dev/
 |   |-- wireless.md
 |   |-- zephyr-linux.md
 |-- scripts/
-|   |-- embedded_dev.py         # 工具层 CLI（build/flash/monitor/regs/fault/decode/hil/report）
+|   |-- embedded_dev.py         # 工具层 CLI（12 子命令）
+|   |-- experiment.py           # 控制环遥测指标/有界更新/仿真/trial record
+|   |-- board_map.py            # 网表+ioc→主控引脚映射
+|   |-- project_memory.py       # 工程识别与证据化记忆
 |   |-- protocol_decode.py      # UART 规范解码 + ISO-TP/UDS/OBD-II/J1939
 |   |-- mcp_server.py           # stdio MCP 服务（暴露同一套工具）
 |   |-- install.py              # 多平台一键安装/校验
@@ -250,6 +285,10 @@ Reference topics / 专题资料：
 - [references/zephyr-linux.md](references/zephyr-linux.md)
 - [references/wireless.md](references/wireless.md)
 - [references/protocols.md](references/protocols.md)
+- [references/control-tuning.md](references/control-tuning.md)
+- [references/board-facts.md](references/board-facts.md)
+- [references/evidence-scope.md](references/evidence-scope.md)
+- [references/project-memory.md](references/project-memory.md)
 
 ## Changelog / 变更记录
 

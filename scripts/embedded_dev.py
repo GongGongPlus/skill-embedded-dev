@@ -1,21 +1,24 @@
 #!/usr/bin/env python3
-"""embedded-dev tool layer: build / flash / monitor / regs / fault / decode / hil.
+"""embedded-dev tool layer: build / flash / monitor / regs / fault / decode / hil /
+tune / board / memory.
 
 Design rules (see SKILL.md "Tool layer and evidence contract"):
-- Never guess a probe, toolchain, target or address. If a choice is ambiguous,
-  list the candidates and exit CONFIG_ERROR (6) so the operator can decide.
+- Never guess a probe, toolchain, target, address, controller, pin or control
+  parameter. If a choice is ambiguous, list the candidates and exit
+  CONFIG_ERROR (6) or DEVICE (4) so the operator can decide.
 - Every side-effecting command has --dry-run. Dry-run prints the exact command
   line(s) and performs no side effect.
 - Success is an exit code, not a line in a log. Exit 0 for build/flash means
   only that build and flash succeeded; it does not prove the target behaves
-  correctly. Prove behaviour with `monitor --expect <token>` on the real board.
+  correctly. Prove behaviour with `monitor --expect <token>` or `hil` on the
+  real board.
 
 Exit-code contract:
   0 PASS / success
   1 BUILD_FAILED
   2 FLASH_FAILED
   3 TARGET_FAULT (decoded target fault, or crash signature found)
-  4 DEVICE / TIMEOUT (probe, port or expected token unavailable)
+  4 DEVICE / TIMEOUT (probe, port, expected token or ambiguous evidence)
   5 STALLED (same failure signature repeated; stop and ask the operator)
   6 CONFIG_ERROR (missing tool, ambiguous backend, missing required option)
 """
@@ -45,7 +48,7 @@ EXIT_CONFIG = 6
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
-VERSION_FALLBACK = "0.5.0"
+VERSION_FALLBACK = "0.6.0"
 
 
 def read_version() -> str:
@@ -1273,10 +1276,65 @@ def cmd_hil(args: argparse.Namespace) -> int:
     return finish("TEST_FAILED", serial_text=serial_text)
 
 
+def _run_helper(script_name: str, argv: list[str]) -> int:
+    """Delegate to a sibling tool module, keeping one implementation of each surface."""
+    import importlib
+
+    if str(SCRIPT_DIR) not in sys.path:
+        sys.path.insert(0, str(SCRIPT_DIR))
+    try:
+        module = importlib.import_module(script_name)
+    except ImportError as exc:
+        print(f"error: helper module {script_name}.py is missing: {exc}", file=sys.stderr)
+        return EXIT_CONFIG
+    try:
+        return int(module.main(list(argv)))
+    except SystemExit as exc:
+        code = exc.code
+        return int(code) if isinstance(code, int) else EXIT_CONFIG
+
+
+def cmd_tune(args: argparse.Namespace) -> int:
+    if not args.helper_args:
+        print(
+            "usage: embedded_dev.py tune <analyze|check-update|simulate|record> [options]\n"
+            "run 'embedded_dev.py tune analyze --help' for details",
+            file=sys.stderr,
+        )
+        return EXIT_CONFIG
+    return _run_helper("experiment", args.helper_args)
+
+
+def cmd_board(args: argparse.Namespace) -> int:
+    if not args.helper_args:
+        print(
+            "usage: embedded_dev.py board <controller|from-ioc> [options]\n"
+            "run 'embedded_dev.py board controller --help' for details",
+            file=sys.stderr,
+        )
+        return EXIT_CONFIG
+    return _run_helper("board_map", args.helper_args)
+
+
+def cmd_memory(args: argparse.Namespace) -> int:
+    if not args.helper_args:
+        print(
+            "usage: embedded_dev.py memory <detect|init|show|remember|search|list|forget> [options]\n"
+            "run 'embedded_dev.py memory detect --help' for details",
+            file=sys.stderr,
+        )
+        return EXIT_CONFIG
+    return _run_helper("project_memory", args.helper_args)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="embedded_dev.py",
-        description="embedded-dev tool layer: build, flash, monitor, registers, fault and protocol decoding, HIL diagnosis and report validation with an exit-code contract.",
+        description=(
+            "embedded-dev tool layer: build, flash, monitor, registers, fault and protocol "
+            "decoding, HIL diagnosis, control-loop evidence, board pin maps, project memory "
+            "and report validation with an exit-code contract."
+        ),
     )
     parser.add_argument("--version", action="version", version=f"embedded-dev tool layer {read_version()}")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1396,6 +1454,24 @@ def build_parser() -> argparse.ArgumentParser:
     report.add_argument("--emit-example", dest="emit_example", action="store_true")
     report.add_argument("--json", action="store_true")
     report.set_defaults(func=cmd_report)
+
+    tune = sub.add_parser(
+        "tune", help="control-loop evidence: analyze telemetry, check bounded updates, simulate, validate records"
+    )
+    tune.add_argument("helper_args", nargs=argparse.REMAINDER, help="arguments for experiment.py")
+    tune.set_defaults(func=cmd_tune)
+
+    board = sub.add_parser(
+        "board", help="hardware facts: controller pin map from a KiCad XML netlist, or a CubeMX .ioc pinmap"
+    )
+    board.add_argument("helper_args", nargs=argparse.REMAINDER, help="arguments for board_map.py")
+    board.set_defaults(func=cmd_board)
+
+    memory = sub.add_parser(
+        "memory", help="project archive and evidence-graded memory (detect/init/show/remember/search/list/forget)"
+    )
+    memory.add_argument("helper_args", nargs=argparse.REMAINDER, help="arguments for project_memory.py")
+    memory.set_defaults(func=cmd_memory)
 
     return parser
 

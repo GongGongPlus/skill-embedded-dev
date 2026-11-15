@@ -5,7 +5,7 @@ The repository is laid out as a single skill directory: SKILL.md lives at the
 repository root together with references/ and scripts/. That layout is directly
 discoverable by DSH, Codex, Claude Code and other Agent Skills standard hosts
 when copied to one of their personal skill roots. This installer copies only the
-runtime entries (not tests, examples, CI or git history) and verifies the copy.
+runtime entries (not tests, CI or git history) and verifies the copy.
 
 Exit codes: 0 installed/verified, 1 usage or verification error, 2 refused to
 overwrite without --force.
@@ -22,7 +22,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SKILL_NAME = "embedded-dev"
-RUNTIME_ENTRIES = ["SKILL.md", "README.md", "LICENSE", "VERSION", "references", "scripts"]
+RUNTIME_ENTRIES = ["SKILL.md", "README.md", "LICENSE", "VERSION", "references", "scripts", "examples"]
 IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc", ".git", ".pytest_cache", "*.log")
 
 HOSTS = {
@@ -59,6 +59,10 @@ def verify_install(dest: Path) -> list[str]:
         errors.append("scripts/embedded_dev.py missing")
     if not (dest / "scripts" / "install.py").is_file():
         errors.append("scripts/install.py missing (run the copy again)")
+    if not (dest / "examples" / "control" / "proposal.json").is_file():
+        errors.append("examples/control/proposal.json missing (docs reference it)")
+    if not (dest / "examples" / "board" / "demo.ioc").is_file():
+        errors.append("examples/board/demo.ioc missing (docs reference it)")
     return errors
 
 

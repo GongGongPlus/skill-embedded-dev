@@ -28,7 +28,20 @@ class TestToolSurface(unittest.TestCase):
         names = {tool["name"] for tool in mcp.tools_list()}
         self.assertEqual(
             names,
-            {"env", "build", "flash", "monitor", "regs", "fault", "decode", "report", "hil"},
+            {
+                "env",
+                "build",
+                "flash",
+                "monitor",
+                "regs",
+                "fault",
+                "decode",
+                "report",
+                "hil",
+                "tune",
+                "board",
+                "memory",
+            },
         )
 
     def test_every_tool_has_an_input_schema(self):
@@ -47,6 +60,21 @@ class TestToolSurface(unittest.TestCase):
     def test_missing_required_argument_is_rejected(self):
         with self.assertRaises(ValueError):
             mcp.build_argv("build", {})
+
+    def test_action_tools_put_the_action_right_after_the_command(self):
+        argv = mcp.build_argv("tune", {"action": "analyze", "csv": "telemetry.csv"})
+        self.assertEqual(argv[:3], ["tune", "analyze", "--csv"])
+        self.assertIn("--json", argv)
+        memory = mcp.build_argv("memory", {"action": "search", "project": "proj", "query": "uart"})
+        self.assertEqual(memory[0:2], ["memory", "search"])
+
+    def test_unknown_action_is_rejected(self):
+        with self.assertRaises(ValueError):
+            mcp.build_argv("tune", {"action": "autotune"})
+
+    def test_action_is_required(self):
+        with self.assertRaises(ValueError):
+            mcp.build_argv("board", {"netlist": "demo.kicadxml"})
 
 
 class TestJsonRpc(unittest.TestCase):

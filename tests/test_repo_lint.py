@@ -68,7 +68,7 @@ class TestSkillEntrypoint(unittest.TestCase):
     def test_every_reference_is_linked_from_skill(self):
         skill_text = (REPO / "SKILL.md").read_text(encoding="utf-8")
         references = sorted((REPO / "references").glob("*.md"))
-        self.assertGreaterEqual(len(references), 12)
+        self.assertGreaterEqual(len(references), 16)
         for path in references:
             self.assertIn(f"references/{path.name}", skill_text, f"{path.name} is not reachable from SKILL.md")
 
@@ -146,6 +146,23 @@ class TestInstallerAndCli(unittest.TestCase):
         hosts = {row["host"] for row in payload["hosts"]}
         self.assertTrue({"dsh", "codex", "claude", "project"}.issubset(hosts))
 
+    def test_installer_plan_carries_examples(self):
+        out = subprocess.run(
+            [
+                sys.executable,
+                str(REPO / "scripts" / "install.py"),
+                "--dry-run",
+                "--dest",
+                str(REPO / "build" / "install-plan"),
+                "--json",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("examples", json.loads(out.stdout)["entries"])
+
     def test_cli_help_works(self):
         out = subprocess.run(
             [sys.executable, str(REPO / "scripts" / "embedded_dev.py"), "--help"],
@@ -154,7 +171,20 @@ class TestInstallerAndCli(unittest.TestCase):
             encoding="utf-8",
         )
         self.assertEqual(out.returncode, 0)
-        for subcommand in ("env", "build", "flash", "monitor", "regs", "fault", "decode", "hil", "report"):
+        for subcommand in (
+            "env",
+            "build",
+            "flash",
+            "monitor",
+            "regs",
+            "fault",
+            "decode",
+            "hil",
+            "report",
+            "tune",
+            "board",
+            "memory",
+        ):
             self.assertIn(subcommand, out.stdout)
 
     def test_bundled_protocol_examples_decode(self):
@@ -187,6 +217,96 @@ class TestInstallerAndCli(unittest.TestCase):
         payload = json.loads(decoded.stdout)
         self.assertEqual(len(payload["frames"]), 2)
         self.assertEqual(payload["summary"]["checksum_failures"], 0)
+
+    def test_bundled_control_examples(self):
+        analyze = subprocess.run(
+            [
+                sys.executable,
+                str(REPO / "scripts" / "embedded_dev.py"),
+                "tune",
+                "analyze",
+                "--csv",
+                str(REPO / "examples" / "control" / "response.csv"),
+                "--json",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        self.assertEqual(analyze.returncode, 0, analyze.stderr)
+        self.assertEqual(json.loads(analyze.stdout)["schema_version"], "control-experiment.v1")
+        update = subprocess.run(
+            [
+                sys.executable,
+                str(REPO / "scripts" / "embedded_dev.py"),
+                "tune",
+                "check-update",
+                "--file",
+                str(REPO / "examples" / "control" / "proposal.json"),
+                "--json",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        self.assertEqual(update.returncode, 0, update.stderr)
+        self.assertTrue(json.loads(update.stdout)["accepted"])
+
+    def test_bundled_board_examples(self):
+        from_ioc = subprocess.run(
+            [
+                sys.executable,
+                str(REPO / "scripts" / "embedded_dev.py"),
+                "board",
+                "from-ioc",
+                "--file",
+                str(REPO / "examples" / "board" / "demo.ioc"),
+                "--json",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        self.assertEqual(from_ioc.returncode, 0, from_ioc.stderr)
+        payload = json.loads(from_ioc.stdout)
+        self.assertEqual(payload["schema_version"], "board-ioc-map.v1")
+        self.assertEqual(payload["mcu"]["name"], "STM32F103C8Tx")
+        controller = subprocess.run(
+            [
+                sys.executable,
+                str(REPO / "scripts" / "embedded_dev.py"),
+                "board",
+                "controller",
+                "--netlist",
+                str(REPO / "examples" / "board" / "demo.kicadxml"),
+                "--json",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        self.assertEqual(controller.returncode, 0, controller.stderr)
+        self.assertEqual(json.loads(controller.stdout)["controller"]["ref"], "U1")
+
+    def test_bundled_memory_detection(self):
+        out = subprocess.run(
+            [
+                sys.executable,
+                str(REPO / "scripts" / "embedded_dev.py"),
+                "memory",
+                "detect",
+                "--project",
+                str(REPO / "examples" / "board"),
+                "--json",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        self.assertEqual(out.returncode, 0, out.stderr)
+        detection = json.loads(out.stdout)
+        self.assertEqual(detection["chips"], ["STM32F103C8Tx"])
+        self.assertFalse(detection["ambiguous"])
 
     def test_mcp_server_self_test(self):
         out = subprocess.run(

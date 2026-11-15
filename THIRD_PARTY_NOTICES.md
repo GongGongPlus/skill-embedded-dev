@@ -28,6 +28,13 @@ implementation; the MIT/Apache-2.0 implementations remain copyright their author
   build-flash-token HIL loop.
 - **Lissio** (Horldsence, Apache-2.0) — CAN ISO-TP/UDS/OBD-II/J1939 decoding scope and
   the MCP-exposed tool surface.
+- **llm-pid-tuner** (KINGSTON-115, MIT) — bounded PID update validation, the telemetry
+  metric contract, and the compact trial-record idea behind `tune`. Only the interface
+  and workflow design were reimplemented; no source code was copied.
+- **yoma** (yoma-embedded; MIT per its `package.json`, while GitHub metadata reports
+  NOASSERTION) — the controller-map/netlist pin-tracing scope, the evidence-graded project
+  memory model, the evidence-scope behavior cases, and the "AI decides configuration, the
+  kernel generates code" separation. Only ideas were reimplemented; no source was copied.
 - **embeddedskills**, **embedded-workbench**, **dsh-stm32** and other public embedded
   skills — reviewed for comparison of tool coverage and workflow discipline; no files
   were copied.

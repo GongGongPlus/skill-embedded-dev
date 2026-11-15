@@ -57,6 +57,17 @@ jobs:
       - name: MCP server self-test
         run: python scripts/mcp_server.py --self-test
 
+      - name: Control-loop, board and project-memory examples
+        shell: bash
+        run: |
+          python scripts/embedded_dev.py tune analyze --csv examples/control/response.csv --json
+          python scripts/embedded_dev.py tune check-update --file examples/control/proposal.json --json
+          python scripts/embedded_dev.py tune simulate --config examples/control/thermal-demo.json \
+            --out build/thermal.csv --json
+          python scripts/embedded_dev.py board controller --netlist examples/board/demo.kicadxml --json
+          python scripts/embedded_dev.py board from-ioc --file examples/board/demo.ioc --json
+          python scripts/embedded_dev.py memory detect --project examples/board --json
+
       - name: HIL dry-run plan (no hardware)
         run: |
           python scripts/embedded_dev.py hil --project examples/stm32-openocd --image build/firmware.elf \

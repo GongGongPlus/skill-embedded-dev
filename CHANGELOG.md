@@ -7,6 +7,49 @@ All notable changes to this repository are documented here. The format follows
 Agent Skills are consumed by an LLM, so the version number also tells the agent
 whether it is looking at the same contract as an earlier session.
 
+## [0.6.0] - 2026-11-15
+
+### Added
+
+- `scripts/experiment.py`: offline control-loop evidence tooling. Telemetry CSV analysis
+  (IAE/MAE, time-weighted tail bias, overshoot relative to the initial amplitude,
+  rise/settling time, optional saturation fraction), segmentation on session/mode/round/
+  setpoint/gain changes, bounded PID update validation that rejects out-of-bounds or
+  oversized steps instead of clipping them, a deterministic first-order plant simulator,
+  and trial-record validation that refuses `converged=true`.
+- `scripts/board_map.py`: controller pin map from KiCad XML netlists (series passives
+  traced, capacitors only bridged across signal nets, power/ground pins excluded, DNP
+  flagged), plus `.ioc` pin roles and reuse-risk notes. Ambiguous MCU candidates exit 4
+  with the candidate list; PDF netlists are refused instead of guessed.
+- `scripts/project_memory.py`: project detection (`.ioc`/`.uvprojx`/`.ewp`/CMake/Makefile/
+  PlatformIO/ESP-IDF), three memory kinds, evidence levels, a source required for
+  `已确认`, 200-entry and 512 KB caps, file locks with `--expected-version` conflicts, and
+  tombstones that block silent recreation.
+- `embedded_dev.py tune/board/memory`: thin delegation subcommands so the same helpers
+  are reachable through the main CLI and the MCP server.
+- `scripts/mcp_server.py`: tool surface grows from 9 to 12 tools, with positional
+  `action` arguments for `tune`, `board`, and `memory`, and offline self-test coverage.
+- `references/control-tuning.md`, `references/board-facts.md`,
+  `references/evidence-scope.md`, `references/project-memory.md`.
+- `examples/control/` (telemetry, bounded proposal, thermal demo) and `examples/board/`
+  (KiCad netlist, `.ioc`) with walkthrough READMEs.
+- `tests/test_experiment.py`, `tests/test_board_map.py`, `tests/test_project_memory.py`;
+  lint checks for the bundled control/board/memory fixtures and the 12-tool MCP surface.
+
+### Changed
+
+- `install.py` now copies `examples/` and verifies the new fixtures after installation.
+- SKILL triage gains control tuning, board-fact verification, evidence-scope, and project
+  memory routes; two iron rules cover bounded control experiments and evidence scope.
+- Exit-code wording distinguishes ambiguous evidence (exit 4) from configuration errors
+  (exit 6).
+
+### Notes
+
+- No source code was copied from llm-pid-tuner or yoma; only public interface and workflow
+  ideas were reimplemented under this repository's MIT license. See
+  `THIRD_PARTY_NOTICES.md`.
+
 ## [0.5.0] - 2026-11-15
 
 ### Added

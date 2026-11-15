@@ -172,6 +172,69 @@ TOOLS: dict[str, dict] = {
         "json": True,
         "prefix": ["hil"],
     },
+    "tune": {
+        "description": (
+            "Control-loop evidence: analyze telemetry CSV metrics, validate a bounded PID update, "
+            "simulate the first-order thermal demo, or validate a trial record. Never certifies convergence."
+        ),
+        "action": ["analyze", "check-update", "simulate", "record"],
+        "flags": {
+            "csv": ("--csv", "value"),
+            "control_limits": ("--control-limits", "value"),
+            "settling_band": ("--settling-band", "value"),
+            "tail_fraction": ("--tail-fraction", "value"),
+            "file": ("--file", "value"),
+            "config": ("--config", "value"),
+            "out": ("--out", "value"),
+            "force": ("--force", "bool"),
+        },
+        "required": ["action"],
+        "json": True,
+        "prefix": ["tune"],
+    },
+    "board": {
+        "description": (
+            "Hardware facts: extract a controller pin map from a KiCad XML netlist, or read pins and "
+            "alternate functions from a CubeMX .ioc file. Never guesses the controller."
+        ),
+        "action": ["controller", "from-ioc"],
+        "flags": {
+            "netlist": ("--netlist", "value"),
+            "main_controller": ("--main-controller", "value"),
+            "file": ("--file", "value"),
+            "output": ("--output", "value"),
+        },
+        "required": ["action"],
+        "json": True,
+        "prefix": ["board"],
+    },
+    "memory": {
+        "description": (
+            "Project archive and evidence-graded memory: detect the toolchain/chip, initialize, show, "
+            "remember with provenance, search, list and forget. Local evidence, not hardware acceptance."
+        ),
+        "action": ["detect", "init", "show", "remember", "search", "list", "forget"],
+        "flags": {
+            "project": ("--project", "value"),
+            "title": ("--title", "value"),
+            "content": ("--content", "value"),
+            "scope": ("--scope", "value"),
+            "evidence_level": ("--evidence-level", "value"),
+            "source": ("--source", "value"),
+            "tags": ("--tags", "value"),
+            "expected_version": ("--expected-version", "value"),
+            "allow_recreate": ("--allow-recreate", "bool"),
+            "query": ("--query", "value"),
+            "limit": ("--limit", "value"),
+            "recent": ("--recent", "value"),
+            "all": ("--all", "bool"),
+            "id": ("--id", "value"),
+            "force": ("--force", "bool"),
+        },
+        "required": ["action"],
+        "json": True,
+        "prefix": ["memory"],
+    },
 }
 
 
@@ -185,6 +248,12 @@ def build_argv(name: str, arguments: dict) -> list[str]:
         if required not in arguments:
             raise ValueError(f"missing required argument: {required}")
     argv = list(spec["prefix"])
+    action_enum = spec.get("action")
+    if action_enum:
+        action = arguments.get("action")
+        if action not in action_enum:
+            raise ValueError(f"{name}.action must be one of: {', '.join(action_enum)}")
+        argv.append(str(action))
     if name == "decode":
         kind = arguments.get("kind")
         if kind not in ("uart", "can", "validate"):
@@ -192,6 +261,8 @@ def build_argv(name: str, arguments: dict) -> list[str]:
         argv.append(kind)
     for key, value in arguments.items():
         if key == "kind" and name == "decode":
+            continue
+        if key == "action" and action_enum:
             continue
         mapping = spec["flags"].get(key)
         if mapping is None:
@@ -231,7 +302,12 @@ def tools_list() -> list[dict]:
     result = []
     for name, spec in TOOLS.items():
         properties = {}
-        required = spec.get("required", [])
+        required = list(spec.get("required", []))
+        action_enum = spec.get("action")
+        if action_enum:
+            properties["action"] = {"type": "string", "enum": list(action_enum)}
+            if "action" not in required:
+                required.append("action")
         for argument, (flag, kind) in spec["flags"].items():
             if argument == "kind":
                 properties[argument] = {"type": "string", "enum": ["uart", "can", "validate"]}
@@ -284,9 +360,24 @@ def self_test() -> int:
     failures: list[str] = []
     listed = tools_list()
     names = {tool["name"] for tool in listed}
-    for required in ("env", "fault", "decode", "hil", "build", "flash", "monitor", "regs", "report"):
+    for required in (
+        "env",
+        "fault",
+        "decode",
+        "hil",
+        "build",
+        "flash",
+        "monitor",
+        "regs",
+        "report",
+        "tune",
+        "board",
+        "memory",
+    ):
         if required not in names:
             failures.append(f"tool {required} missing from tools/list")
+    if len(listed) != 12:
+        failures.append(f"tools/list has {len(listed)} tools, expected 12")
     env = call_tool("env", {})
     if env.get("isError"):
         failures.append("tools/call env failed: " + env["content"][0]["text"][:200])
@@ -305,6 +396,19 @@ def self_test() -> int:
         decoded = call_tool("decode", {"kind": "validate", "spec": str(spec)})
         if decoded.get("isError"):
             failures.append("decode validate failed on the bundled example spec")
+    proposal = REPO_ROOT / "examples" / "control" / "proposal.json"
+    if proposal.is_file():
+        tune = call_tool("tune", {"action": "check-update", "file": str(proposal)})
+        if tune.get("isError"):
+            failures.append("tune check-update failed on the bundled proposal")
+    board_ioc = REPO_ROOT / "examples" / "board" / "demo.ioc"
+    if board_ioc.is_file():
+        board = call_tool("board", {"action": "from-ioc", "file": str(board_ioc)})
+        if board.get("isError"):
+            failures.append("board from-ioc failed on the bundled .ioc example")
+    memory = call_tool("memory", {"action": "detect", "project": str(REPO_ROOT / "examples" / "board")})
+    if memory.get("isError"):
+        failures.append("memory detect failed on the bundled board example")
     if failures:
         for failure in failures:
             print(f"FAIL: {failure}", file=sys.stderr)
