@@ -27,6 +27,10 @@ whether it is looking at the same contract as an earlier session.
   an explicit allow-list, `verify_install` names them, and a regression installs
   to a temp directory and asserts the fixtures survive while `*.pyc` and
   `__pycache__` do not.
+- `THIRD_PARTY_NOTICES.md` was linked from the README's open-source section but
+  was missing from `RUNTIME_ENTRIES`, so every installed copy carried a dead
+  link. It now ships, and a new gate derives the required root files from the
+  README's own local links instead of a second hand-maintained list.
 
 ### Changed
 

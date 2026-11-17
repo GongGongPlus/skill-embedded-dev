@@ -90,6 +90,33 @@ class TestInstall(unittest.TestCase):
             errors = installer.verify_install(dest)
         self.assertTrue(any(installer.CAPTURE_FIXTURES[0] in error for error in errors), errors)
 
+    def test_every_root_file_the_readme_links_is_shipped(self):
+        """README links THIRD_PARTY_NOTICES.md; the installer did not ship it.
+
+        A dead link in an installed skill is the same class of defect as a stale
+        subcommand count: the copy claims something it cannot back up. Derive the
+        requirement from the README links instead of maintaining a second list.
+        """
+        import re
+
+        text = (REPO / "README.md").read_text(encoding="utf-8")
+        linked_root_files = set()
+        for target in re.findall(r"\]\(([^)]+)\)", text):
+            path_part = target.split("#", 1)[0].strip()
+            if not path_part or path_part.startswith(("http://", "https://", "mailto:")):
+                continue
+            # Only repo-root entries are the installer's responsibility; files
+            # inside a directory entry (references/, scripts/, examples/) ride along.
+            if "/" in path_part or "\\" in path_part:
+                continue
+            linked_root_files.add(path_part)
+
+        self.assertTrue(linked_root_files, "README has no local root links to check")
+        for name in sorted(linked_root_files):
+            with self.subTest(file=name):
+                self.assertTrue((REPO / name).exists(), f"README links {name}, which does not exist")
+                self.assertIn(name, installer.RUNTIME_ENTRIES, f"README links {name} but the installer never copies it")
+
     def test_refuses_to_overwrite_without_force(self):
         with tempfile.TemporaryDirectory() as tmp:
             dest = Path(tmp) / "embedded-dev"

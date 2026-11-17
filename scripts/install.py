@@ -38,6 +38,7 @@ RUNTIME_ENTRIES = [
     "README.md",
     "CHANGELOG.md",
     "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
     "VERSION",
     "pyproject.toml",
     "references",
