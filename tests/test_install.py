@@ -6,6 +6,9 @@ import contextlib
 import importlib.util
 import io
 import json
+import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -205,6 +208,56 @@ class TestMultiHost(unittest.TestCase):
         result = installer.install_one("dsh", installer.REPO_ROOT, force=True, dry_run=False)
         self.assertTrue(result.get("skipped"))
         self.assertFalse(result["errors"])
+
+
+class TestNonAsciiPath(unittest.TestCase):
+    """A skill root may live under a non-ASCII directory (a Chinese Desktop folder).
+
+    Regression guard: `install.py` used to print JSON in the console codepage, so
+    a caller decoding stdout as UTF-8 crashed with UnicodeDecodeError and
+    subprocess reported `stdout=None`. The tool must emit UTF-8 regardless of the
+    path characters or the Windows console codepage.
+    """
+
+    def test_list_json_is_utf8_decodable_from_a_non_ascii_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "嵌入式-skills"
+            root.mkdir()
+            original = installer.HOSTS
+            installer.HOSTS = {"dsh": (lambda r=root: r)}
+            try:
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    code = installer.main(["--list", "--json"])
+            finally:
+                installer.HOSTS = original
+        self.assertEqual(code, installer.EXIT_OK)
+        payload = json.loads(out.getvalue())
+        self.assertIn("嵌入式-skills", payload["hosts"][0]["root"])
+
+    def test_subprocess_captures_stdout_under_a_non_ascii_cwd(self):
+        """The exact failure mode: an outer process reading our stdout as UTF-8."""
+        with tempfile.TemporaryDirectory() as tmp:
+            workdir = Path(tmp) / "嵌入式项目"
+            workdir.mkdir()
+            for entry in ("scripts", "SKILL.md", "VERSION"):
+                source = installer.REPO_ROOT / entry
+                target = workdir / entry
+                if source.is_dir():
+                    shutil.copytree(source, target, ignore=shutil.ignore_patterns("__pycache__"))
+                else:
+                    shutil.copy2(source, target)
+            completed = subprocess.run(
+                [sys.executable, "scripts/install.py", "--list", "--json"],
+                cwd=workdir,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                check=False,
+            )
+        self.assertIsNotNone(completed.stdout, f"stdout was lost: {completed.stderr[:300]}")
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["version"], (installer.REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip())
 
 
 if __name__ == "__main__":

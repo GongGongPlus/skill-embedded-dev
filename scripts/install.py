@@ -324,6 +324,18 @@ def verify_targets(spec: str, as_json: bool) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # A skill root or project path may contain non-ASCII characters (a Chinese
+    # Desktop folder, for example). Without this, Windows encodes the JSON paths
+    # in the console codepage and any caller reading stdout as UTF-8 dies with a
+    # UnicodeDecodeError, which subprocess surfaces as stdout=None.
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            try:
+                reconfigure(encoding="utf-8")
+            except (ValueError, OSError):
+                pass
+
     parser = argparse.ArgumentParser(description="Install or verify the embedded-dev skill in an agent harness.")
     parser.add_argument(
         "--target",
