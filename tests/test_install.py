@@ -64,6 +64,32 @@ class TestInstall(unittest.TestCase):
             self.assertTrue((dest / "scripts" / "embedded_dev.py").is_file())
             self.assertTrue((dest / "VERSION").is_file())
 
+    def test_install_ships_the_bundled_capture_fixtures(self):
+        """A blanket "*.log" skip used to ship a skill whose own examples could not run.
+
+        The candump fixtures under examples/ are walkthrough inputs, not build
+        noise, so they must survive the copy and be named by verify_install.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = Path(tmp) / "embedded-dev"
+            with contextlib.redirect_stdout(io.StringIO()):
+                installer.install("dsh", dest, force=False, dry_run=False, as_json=False)
+            for relative in installer.CAPTURE_FIXTURES:
+                with self.subTest(fixture=relative):
+                    self.assertTrue((dest / relative).is_file(), f"{relative} was dropped by the installer")
+            # .pyc and cache dirs must still be excluded.
+            self.assertEqual(list(dest.rglob("*.pyc")), [])
+            self.assertEqual([p for p in dest.rglob("__pycache__")], [])
+
+    def test_verify_flags_a_missing_capture_fixture(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = Path(tmp) / "embedded-dev"
+            with contextlib.redirect_stdout(io.StringIO()):
+                installer.install("dsh", dest, force=False, dry_run=False, as_json=False)
+            (dest / installer.CAPTURE_FIXTURES[0]).unlink()
+            errors = installer.verify_install(dest)
+        self.assertTrue(any(installer.CAPTURE_FIXTURES[0] in error for error in errors), errors)
+
     def test_refuses_to_overwrite_without_force(self):
         with tempfile.TemporaryDirectory() as tmp:
             dest = Path(tmp) / "embedded-dev"

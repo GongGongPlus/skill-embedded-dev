@@ -949,7 +949,16 @@ def cmd_stack(args: argparse.Namespace) -> int:
             return EXIT_CONFIG
         origin = str(source)
     else:
-        text = sys.stdin.read()
+        try:
+            text = sys.stdin.read()
+        except (OSError, ValueError) as exc:
+            # stdin can be closed, redirected from a terminal that never sends
+            # EOF, or captured by a test runner that raises instead of reading.
+            print(
+                f"cannot read task list from stdin: {exc}; pass --tasklist <file>",
+                file=sys.stderr,
+            )
+            return EXIT_CONFIG
         origin = "stdin"
     tasks = parse_tasklist(text)
     if not tasks:

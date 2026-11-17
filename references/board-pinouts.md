@@ -9,6 +9,29 @@ Evidence level of everything in this file: **engineering inference from public
 schematics** until verified with a multimeter or a register read-back on the
 actual board. Say so in the completion report.
 
+### 每张表的来源与核对状态 / source and check status per table
+
+Do not trust a table without reading this column first. `已确认` means the pins
+were read out of the cited file in this repository's lifetime; `待核对` means the
+table is carried from general knowledge of the vendor default wiring and has
+**not** been re-derived from the authority document. A `待核对` table is a
+hypothesis, not a fact — open the datasheet before wiring.
+
+| 表 / table | 权威来源 / authority | 核对状态 |
+|---|---|---|
+| nRF52840 DK | Zephyr `nrf52840dk` board doc + `nrf52840dk_nrf52840-pinctrl.dtsi` | **已确认** 2026-11-17 |
+| Nice!Nano / ProMicro nRF52840 | vendor variant files (not the DK) | 待核对 |
+| STM32F103C8T6 Blue Pill | ST DS5319 pinout table + board schematic | 待核对 |
+| STM32F401/F411 Black Pill | ST DS x pinout + WeAct schematic | 待核对 |
+| ESP32-DevKitC | Espressif ESP32 datasheet + DevKitC schematic | 待核对（strapping 规则来自 ESP32 datasheet） |
+| ESP32-C3-DevKitM-1 | Espressif ESP32-C3 datasheet + DevKitM schematic | 待核对 |
+| Raspberry Pi Pico (RP2040) | RP2040 datasheet + Pico datasheet | 待核对 |
+| AVR ATmega328P Nano | ATmega328P datasheet + Arduino Nano schematic | 待核对 |
+
+If you re-derive one of these tables, flip its status to `已确认` **and** write
+the document revision next to it. Do not flip it because the pins "looked right
+on the bench" — that is a single-board observation, cite it as such.
+
 ## Rules before wiring anything
 
 1. Identify the exact board revision (silk text, USB connector, flash size).
@@ -105,15 +128,33 @@ just in firmware.
 | BOOTSEL | button to QSPI CS | hold at reset for USB mass-storage bootloader |
 | SWD | SWCLK/SWDIO/GND test pads | not on header on Pico |
 
-## nRF52840 DK / Nice!Nano
+## nRF52840 DK (PCA10056) / Nice!Nano
+
+Source / 来源: Zephyr `boards/nordic/nrf52840dk/` board doc (LED/button table) +
+`nrf52840dk_nrf52840-pinctrl.dtsi` (every other pin below is read straight out of
+that file), checked 2026-11-17. **已确认** for the DK; Nice!Nano / ProMicro clones
+reuse none of this and must be re-derived from their own variant files.
 
 | Signal | Pin | Note |
 |---|---|---|
-| SWDIO / SWDCLK | P0.13 / P0.14 on DK | |
-| UART TX/RX | P0.06 / P0.08 on DK (default) | check board definition in Zephyr |
+| SWDIO / SWDCLK | **dedicated debug pins, not GPIO** | On the nRF52840 these are their own pins (not any P0.x/P1.x). They cannot be pin-muxed to GPIO and are not covered by `nrf-pinctrl`. Earlier revisions of this file wrongly listed `P0.13 / P0.14`; those two pins are **LED1 / LED2**. |
+| UART0 TX/RX | P0.06 / P0.08 | Flow control RTS P0.05, CTS P0.07. Source: `uart0_default` in the DK pinctrl dtsi. |
+| UART1 TX/RX | P1.02 / P1.01 | TX is P1.02, RX is P1.01 (`uart1_default`). Easy to swap. |
+| I2C0 SDA/SCL | P0.26 / P0.27 | Shared with SPI0 SCK/MOSI — they are the same physical pins. |
+| I2C1 SDA/SCL | P0.30 / P0.31 | Shared with SPI1 MOSI(0.30)/SCK(0.31). |
+| SPI0 SCK/MOSI/MISO | P0.27 / P0.26 / P0.29 | Collides with I2C0; only one may be enabled at a time. |
+| QSPI flash | SCK P0.19, IO0-P0.20 IO1-P0.21 IO2-P0.22 IO3-P0.23, CSN P0.17 | **do not repurpose** on boards with external flash; SPI2 also sits on P0.19/20/21. |
+| LEDs | LED1 P0.13, LED2 P0.14, LED3 P0.15, LED4 P0.16 | active-low on the DK. PWM0 default output is P0.13 with `nordic,invert`. |
+| Buttons | SW1 P0.11, SW2 P0.12, SW3 P0.24, SW4 P0.25 | |
 | NFC | P0.09 / P0.10 | must be configured as NFC or GPIO deliberately |
 | USB D-/D+ | dedicated | |
-| QSPI flash | dedicated pins | do not repurpose on boards with external flash |
+
+## Nice!Nano v2 / ProMicro nRF52840 clone（与 DK 不通用）
+
+This board exposes **no** DK pin names. Take the mapping from the board variant
+files, never from the DK table above. Cross-check with
+`alexex1993/mcu-skills/skills/nrf/nrf52840-promicro/reference/board-hardware.md`
+or the vendor variant header. 核对状态: **待核对**（本文件未逐脚验证）。
 
 ## AVR ATmega328P "Nano"
 

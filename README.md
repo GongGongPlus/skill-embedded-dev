@@ -106,7 +106,7 @@ python scripts/rtt_capture.py --control-block-file examples/rtt/control-block.bi
 python scripts/size_gate.py --size-output-file examples/size/demo-size.txt --max-text 8K
 ```
 
-`scripts/mcp_server.py` 把同一套 14 个工具经 stdio JSON-RPC 暴露给支持 MCP 的宿主（Claude Code、Codex、
+`scripts/mcp_server.py` 把同一套 19 个工具经 stdio JSON-RPC 暴露给支持 MCP 的宿主（Claude Code、Codex、
 DSH 等），不再维护第二套命令；`--self-test` 可离线验证工具面与 JSON-RPC 契约。
 
 ### 一键安装 / 多平台（DSH + Codex）
@@ -283,7 +283,7 @@ skill-embedded-dev/
 |   |-- wireless.md
 |   |-- zephyr-linux.md
 |-- scripts/
-|   |-- embedded_dev.py         # 工具层 CLI（14 子命令）
+|   |-- embedded_dev.py         # 工具层 CLI（19 子命令）
 |   |-- experiment.py           # 控制环遥测指标/有界更新/仿真/trial record
 |   |-- board_map.py            # 网表+ioc→主控引脚映射
 |   |-- project_memory.py       # 工程识别与证据化记忆
@@ -293,7 +293,7 @@ skill-embedded-dev/
 |   |-- dbc_decode.py           # Vector DBC → candump 信号物理量
 |   |-- rtt_capture.py          # SEGGER RTT 抓取（离线 dump / J-Link）
 |   |-- size_gate.py            # size -A 体积预算与基线回归门禁
-|   |-- mcp_server.py           # stdio MCP 服务（暴露同一套 14 个工具）
+|   |-- mcp_server.py           # stdio MCP 服务（暴露同一套 19 个工具）
 |   |-- install.py              # 多平台一键安装/内容校验（dsh、codex 等）
 |   |-- report_schema.json      # 完成报告契约
 |   |-- diagnostic_report_schema.json  # HIL 诊断报告契约

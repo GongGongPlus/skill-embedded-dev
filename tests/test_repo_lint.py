@@ -7,6 +7,7 @@ report contract stay consistent across releases.
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
 import subprocess
@@ -30,6 +31,15 @@ def load_module(name: str, relative: str):
 ed = load_module("embedded_dev_lint", "scripts/embedded_dev.py")
 
 LINK_RE = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
+
+
+def _cli_subcommands() -> list[str]:
+    """Read the real subcommand set out of argparse instead of trusting prose."""
+    parser = ed.build_parser()
+    subparsers = next(
+        action for action in parser._actions if isinstance(action, argparse._SubParsersAction)
+    )
+    return list(subparsers.choices)
 
 
 class TestMetadata(unittest.TestCase):
@@ -110,6 +120,34 @@ class TestSkillEntrypoint(unittest.TestCase):
             with self.subTest(script=script.name):
                 self.assertRegex(body, r"(?m)^def main\(", f"{script.name} must expose main(argv) -> int")
                 self.assertIn("if __name__ == \"__main__\"", body, f"{script.name} needs a __main__ guard")
+
+    def test_documented_subcommand_count_matches_the_cli(self):
+        """A stale "14 subcommands" claim is a declaration that disagrees with reality.
+
+        The repo's own evidence rule is that a claim and the thing it describes must
+        share a domain; the count in SKILL.md/README.md drifted from 14 to 19 once
+        already, so it is now derived from argparse instead of being retyped.
+        """
+        subcommands = sorted(_cli_subcommands())
+
+        skill_text = (REPO / "SKILL.md").read_text(encoding="utf-8")
+        readme_text = (REPO / "README.md").read_text(encoding="utf-8")
+        claimed: set[int] = set()
+        for label, text in (("SKILL.md", skill_text), ("README.md", readme_text)):
+            for match in re.finditer(r"(\d+)\s*个(?:可执行)?(?:子命令|工具)", text):
+                claimed.add(int(match.group(1)))
+                self.assertEqual(
+                    int(match.group(1)),
+                    len(subcommands),
+                    f"{label} claims {match.group(1)} subcommands/tools, the CLI has {len(subcommands)}",
+                )
+        self.assertTrue(claimed, "no subcommand count is documented at all")
+        self.assertIn(f"{len(subcommands)} 子命令", readme_text)
+
+    def test_mcp_tool_surface_matches_the_cli(self):
+        """The MCP server must not drift from the CLI; one implementation per capability."""
+        mcp = load_module("mcp_server_lint", "scripts/mcp_server.py")
+        self.assertEqual(sorted(mcp.TOOLS), sorted(_cli_subcommands()))
 
     def test_example_fixtures_are_tracked_by_git(self):
         """A fixture must be in the repository, not merely present on this machine.

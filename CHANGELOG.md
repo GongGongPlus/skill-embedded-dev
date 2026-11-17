@@ -7,6 +7,44 @@ All notable changes to this repository are documented here. The format follows
 Agent Skills are consumed by an LLM, so the version number also tells the agent
 whether it is looking at the same contract as an earlier session.
 
+## [Unreleased]
+
+### Fixed
+
+- `references/board-pinouts.md` claimed the nRF52840 DK debug pins were
+  `P0.13 / P0.14`. Those are **LED1 / LED2**; SWDIO/SWDCLK are dedicated pins
+  that are not part of the GPIO port and cannot be routed through
+  `nrf-pinctrl`. The DK table is now re-derived from the Zephyr
+  `nrf52840dk_nrf52840-pinctrl.dtsi`, which also corrected the pin-sharing notes
+  (I2C0/SPI0 on P0.26-P0.27, QSPI on P0.17-P0.23, UART1 TX P1.02 / RX P1.01) and
+  separated the Nice!Nano clone, which shares no pin mapping with the DK.
+- `cmd_stack` read `sys.stdin` without protection. A test runner that raises
+  instead of returning EOF produced a traceback instead of the documented exit
+  code 6. It now reports the read failure and returns `EXIT_CONFIG`.
+- `scripts/install.py` skipped every `*.log` when copying `examples/`, so an
+  installed skill could not run its own candump walkthroughs (`dbc_decode.py`
+  and `decode can` both need the fixture). The two capture fixtures are now on
+  an explicit allow-list, `verify_install` names them, and a regression installs
+  to a temp directory and asserts the fixtures survive while `*.pyc` and
+  `__pycache__` do not.
+
+### Changed
+
+- SKILL.md and README.md claimed "14 subcommands / 14 tools" while the CLI and
+  the MCP surface had grown to 19. Two new repository gates derive the count
+  from `build_parser()` and assert that SKILL.md, README.md, and
+  `mcp_server.TOOLS` all agree with it, so the number can no longer drift.
+- `references/board-pinouts.md` now carries a per-table source and check-status
+  column: only the nRF52840 DK table is `已确认`; the rest are explicitly marked
+  `待核对` and must be re-derived from the authority document before wiring.
+
+### Tests
+
+- 361 -> 366 tests. The new ones exist to catch the four defects above rather
+  than to raise a number: an unreadable stdin, a drifted subcommand count, an
+  MCP surface that disagrees with the CLI, and an installer that drops fixtures.
+  Each was falsified by re-introducing the bug and watching the test fail.
+
 ## [0.8.0] - 2026-11-17
 
 Five resource- and fact-oriented tools. Each closes a gap between something the

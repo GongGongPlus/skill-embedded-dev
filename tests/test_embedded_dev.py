@@ -303,6 +303,22 @@ class TestStackReport(unittest.TestCase):
         code, out, _ = run_main(["stack", "--min-free", "128", "--json"])
         self.assertNotEqual(code, ed.EXIT_OK, "stdin is empty, this must not claim success")
 
+    def test_stack_unreadable_stdin_is_config_error_not_traceback(self):
+        """A test runner (or a closed pipe) raises on read; that must be a clean exit."""
+
+        class UnreadableStdin:
+            def read(self, *args, **kwargs):
+                raise OSError("pytest: reading from stdin while output is captured!")
+
+        original = sys.stdin
+        sys.stdin = UnreadableStdin()
+        try:
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                code = ed.main(["stack", "--min-free", "128", "--json"])
+        finally:
+            sys.stdin = original
+        self.assertEqual(code, ed.EXIT_CONFIG)
+
     def test_stack_json_marks_below_threshold_tasks(self):
         import tempfile
 

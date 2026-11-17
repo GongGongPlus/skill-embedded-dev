@@ -44,7 +44,28 @@ RUNTIME_ENTRIES = [
     "scripts",
     "examples",
 ]
-IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc", ".git", ".pytest_cache", "*.log")
+# Capture fixtures under examples/ are *inputs* to the bundled walkthroughs, so a
+# blanket "*.log" skip would ship a skill whose own examples cannot run. The
+# .gitignore already re-includes them for the same reason; keep the two in step.
+CAPTURE_FIXTURES = (
+    "examples/protocols/candump.log",
+    "examples/dbc/demo-candump.log",
+)
+_CAPTURE_NAMES = {path.rsplit("/", 1)[-1] for path in CAPTURE_FIXTURES}
+_SKIP_DIRS = {"__pycache__", ".git", ".pytest_cache", ".ruff_cache"}
+
+
+def _ignore(directory: str, names: list[str]) -> set[str]:
+    skipped = {name for name in names if name in _SKIP_DIRS or name.endswith(".pyc")}
+    skipped |= {
+        name
+        for name in names
+        if name.endswith(".log") and name not in _CAPTURE_NAMES
+    }
+    return skipped
+
+
+IGNORE = _ignore
 
 EXIT_OK = 0
 EXIT_USAGE = 1
@@ -97,6 +118,9 @@ def verify_install(dest: Path) -> list[str]:
     for relative in ("examples/control/proposal.json", "examples/board/demo.ioc"):
         if not (dest / relative).is_file():
             errors.append(f"{relative} missing (docs reference it)")
+    for relative in CAPTURE_FIXTURES:
+        if not (dest / relative).is_file():
+            errors.append(f"{relative} missing (bundled walkthroughs decode it)")
     if not (dest / "CHANGELOG.md").is_file():
         errors.append("CHANGELOG.md missing (README links it)")
     if read_version(dest) is None:
