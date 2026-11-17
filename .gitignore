@@ -6,6 +6,10 @@ build/
 .venv/
 venv/
 *.log
+# Capture fixtures under examples/ are inputs to the bundled walkthroughs, not
+# build noise: they must stay in the repository or a fresh clone fails its own
+# test suite. Keep this re-include below the *.log rule.
+!examples/**/*.log
 .DS_Store
 Thumbs.db
 .env

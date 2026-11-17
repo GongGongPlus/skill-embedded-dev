@@ -1,0 +1,7 @@
+# Captured CAN traffic for the decode example (candump -L / -ta format).
+# UDS: ReadDataByIdentifier (0x22) DID 0xF190 sent to ECU 0x7E0.
+(1700000000.000000) can0 7E0#0322F190
+# UDS negative response 0x7F (serviceNotSupportedInActiveSession / requestOutOfRange)
+(1700000000.010000) can0 7E8#037F2231
+# OBD-II mode 01 PID 0x0C (engine rpm): (0x1AF8) / 4 = 1726 rpm
+(1700000000.020000) can0 7DF#06410C1AF80000

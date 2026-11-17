@@ -111,6 +111,87 @@ class TestSkillEntrypoint(unittest.TestCase):
                 self.assertRegex(body, r"(?m)^def main\(", f"{script.name} must expose main(argv) -> int")
                 self.assertIn("if __name__ == \"__main__\"", body, f"{script.name} needs a __main__ guard")
 
+    def test_example_fixtures_are_tracked_by_git(self):
+        """A fixture must be in the repository, not merely present on this machine.
+
+        `examples/**/*.log` was ignored by the blanket `*.log` rule, so the bundled
+        candump walkthroughs existed locally but never reached the repository: a
+        fresh clone failed its own test suite. This check runs the fixtures the
+        tests depend on through `git check-ignore` so that failure mode cannot
+        come back silently.
+        """
+        fixtures = [
+            "examples/dbc/demo.dbc",
+            "examples/dbc/demo-candump.log",
+            "examples/map/demo.map",
+            "examples/size/demo-size.txt",
+            "examples/svd/demo.svd",
+            "examples/svd/demo-dump.txt",
+            "examples/rtt/control-block.bin",
+            "examples/rtt/buffer.bin",
+            "examples/protocols/candump.log",
+            "examples/protocols/capture-uart.hex",
+            "examples/protocols/uart-env-sensor.json",
+            "examples/control/response.csv",
+            "examples/control/proposal.json",
+            "examples/board/demo.ioc",
+            "examples/board/demo.kicadxml",
+        ]
+        for relative in fixtures:
+            path = REPO / relative
+            with self.subTest(fixture=relative):
+                self.assertTrue(path.is_file(), f"{relative} is missing from the working tree")
+
+        if not (REPO / ".git").exists():
+            self.skipTest("not a git checkout; cannot evaluate ignore rules")
+
+        result = subprocess.run(
+            ["git", "check-ignore", "--no-index", *fixtures],
+            cwd=REPO,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+        )
+        self.assertEqual(
+            result.stdout.strip(),
+            "",
+            "these example fixtures are excluded by .gitignore and would be missing "
+            "from a fresh clone:\n" + result.stdout,
+        )
+
+    def test_walkthrough_promises_match_the_tree(self):
+        """Every fixture a README points at must exist.
+
+        Build output is excluded on purpose: a walkthrough legitimately tells the
+        reader to produce ``build/firmware.elf`` first, so requiring it to be
+        committed would be wrong.
+        """
+        build_markers = ("/build/", "\\build\\")
+        referenced: set[str] = set()
+        for readme in sorted((REPO / "examples").glob("*/README.md")):
+            text = readme.read_text(encoding="utf-8")
+            for target in LINK_RE.findall(text):
+                if target.startswith(("http://", "https://", "#", "mailto:")):
+                    continue
+                path_part = target.split("#", 1)[0].strip()
+                if path_part:
+                    referenced.add(path_part)
+            # Bare paths in fenced commands are what a reader actually types.
+            for line in text.splitlines():
+                for token in line.split():
+                    if token.startswith("examples/") and not token.endswith(("\\", "|")):
+                        referenced.add(token)
+        checked = 0
+        for relative in sorted(referenced):
+            if any(marker in relative for marker in build_markers) or relative.endswith("/build"):
+                continue
+            checked += 1
+            candidate = REPO / relative
+            with self.subTest(path=relative):
+                self.assertTrue(candidate.exists(), f"a walkthrough references a missing path: {relative}")
+        self.assertGreater(checked, 5, "the walkthrough check found suspiciously few paths to verify")
+
 
 class TestMarkdownLinks(unittest.TestCase):
     def _check(self, document: Path):

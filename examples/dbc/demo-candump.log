@@ -1,0 +1,20 @@
+# Captured CAN traffic matching examples/dbc/demo.dbc (candump -L format).
+#
+# ENGINE_STATUS (0x1A0 = 416), little-endian (Intel) layout:
+#   bytes 0-1  EngineSpeed   0x2EE0 = 12000 -> 12000 * 0.25 = 3000 rpm
+#   byte  2    EngineTemp    0x82   = 130   -> 130 - 40 = 90 degC
+#   byte  3    ThrottlePos   0x80   = 128   -> 128 * 0.392156 = 50 %
+(1700000000.000000) can0 1A0#E02E828000000000
+# BODY_STATUS (0x100 = 256), DoorState (mux selector) = 1:
+#   DoorFL / DoorFR are m0 signals and must be reported as skipped.
+#   BigEndianCounter 23|16@0 reads bytes 2-3 = 0x002A = 42
+(1700000000.010000) can0 100#0100002A00000000
+# BODY_STATUS (0x100) with DoorState = 2:
+#   WindowPos is an m1 signal and is skipped; no m2 signal exists.
+(1700000000.020000) can0 100#0200002A00000000
+# GEARBOX (0x200 = 512), big-endian (Motorola) layout:
+#   GearRatio   7|16@0 reads bytes 0-1 = 0x0BB8 = 3000 -> 3.000 ratio
+#   OilPressure 23|16@0 reads bytes 2-3 = 0x1F40 = 8000 -> 800.0 bar
+(1700000000.030000) can0 200#0BB81F4000000000
+# An ID that no DBC entry describes: reported as unknown, not dropped.
+(1700000000.040000) can0 7E0#0322F190
