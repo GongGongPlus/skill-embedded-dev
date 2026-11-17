@@ -84,6 +84,33 @@ class TestSkillEntrypoint(unittest.TestCase):
         self.assertIn("scripts/embedded_dev.py", skill_text)
         self.assertIn("scripts/install.py", skill_text)
 
+    def test_no_orphan_scripts(self):
+        """Every script must be reachable from SKILL.md, tested, and documented.
+
+        0.7.0 removed two scripts that were only named in the README tree; this
+        check exists so a script can never quietly become unreachable again.
+        """
+        skill_text = (REPO / "SKILL.md").read_text(encoding="utf-8")
+        readme_text = (REPO / "README.md").read_text(encoding="utf-8")
+        test_text = "\n".join(
+            path.read_text(encoding="utf-8") for path in sorted((REPO / "tests").glob("test_*.py"))
+        )
+        scripts = sorted((REPO / "scripts").glob("*.py"))
+        self.assertTrue(scripts)
+        for script in scripts:
+            name = script.name
+            with self.subTest(script=name):
+                self.assertIn(name, skill_text, f"{name} is not mentioned in SKILL.md")
+                self.assertIn(name, readme_text, f"{name} is not mentioned in README.md")
+                self.assertIn(name, test_text, f"{name} has no test that references it")
+
+    def test_every_script_has_a_main(self):
+        for script in sorted((REPO / "scripts").glob("*.py")):
+            body = script.read_text(encoding="utf-8")
+            with self.subTest(script=script.name):
+                self.assertRegex(body, r"(?m)^def main\(", f"{script.name} must expose main(argv) -> int")
+                self.assertIn("if __name__ == \"__main__\"", body, f"{script.name} needs a __main__ guard")
+
 
 class TestMarkdownLinks(unittest.TestCase):
     def _check(self, document: Path):

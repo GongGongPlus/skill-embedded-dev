@@ -127,6 +127,31 @@ class TestCli(unittest.TestCase):
                 code = installer.main(["--dest", str(Path(tmp) / "nope"), "--verify-only"])
         self.assertEqual(code, 1)
 
+    def test_verify_targets_treats_absent_hosts_as_not_installed(self):
+        """`--verify-only --target all` must not fail just because a host is unused."""
+        with tempfile.TemporaryDirectory() as tmp:
+            dsh_root = Path(tmp) / "dsh-skills"
+            dsh_root.mkdir()
+            codex_root = Path(tmp) / "codex-skills"
+            codex_root.mkdir()  # root exists, but no embedded-dev inside it
+            with contextlib.redirect_stdout(io.StringIO()):
+                installer.install("dsh", dsh_root / "embedded-dev", force=False, dry_run=False, as_json=False)
+            original = installer.HOSTS
+            installer.HOSTS = {
+                "dsh": (lambda p=dsh_root: p),
+                "codex": (lambda c=codex_root: c),
+            }
+            try:
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    code = installer.verify_targets("all", as_json=True)
+            finally:
+                installer.HOSTS = original
+        payload = json.loads(out.getvalue())
+        self.assertEqual(code, installer.EXIT_OK, "an uninstalled host is not a broken install")
+        self.assertEqual(payload["not_installed"], ["codex"])
+        self.assertTrue(payload["valid"])
+
 
 class TestMultiHost(unittest.TestCase):
     def test_resolve_targets_accepts_a_comma_list(self):

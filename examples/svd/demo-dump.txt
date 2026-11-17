@@ -1,0 +1,17 @@
+# Register dump captured from a demo STM32F103 session.
+# Format accepted by svd_decode.py --dump: ADDRESS VALUE (hex, either "0x.. 0x.."
+# or "0x..=0x.." per line).
+#
+# RCC.CR after a PLL start attempt: HSION|HSIRDY|PLLSRC|PLLMUL=7|PLLON set.
+# bit0 HSION | bit1 HSIRDY | bit16 PLLSRC | bits21:18 PLLMUL=7 | bit24 PLLON
+0x40021000=0x011D0003
+# RCC.APB2ENR: AFIO + IOPA + USART1 clocks enabled
+0x40021018=0x00004005
+# GPIOA.CRL: every pin left at the reset value
+0x40010800=0x44444444
+# GPIOA.CRH read through derivedFrom
+0x40010804=0x44444444
+# An address inside RCC's window but with no register at offset 0x04
+0x40021004=0x00000000
+# An address outside every peripheral in this SVD fragment
+0x50000000=0xDEADBEEF

@@ -1,7 +1,7 @@
 # 嵌入式与固件开发 / Embedded and Firmware Development
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.7.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.8.0-blue.svg)](CHANGELOG.md)
 [![Tests](https://img.shields.io/badge/tests-unittest-4c1.svg)](.github/workflows/tests.yml)
 [![Codex Skill](https://img.shields.io/badge/Codex-Skill-black.svg)](SKILL.md)
 
@@ -86,6 +86,25 @@ python scripts/embedded_dev.py memory remember --project . --title "UART1 115200
 
 统一退出码：`0` 成功、`1` 构建失败、`2` 烧录失败、`3` 检测到硬件故障、
 `4` 测试/串口/超时失败、`5` 停滞（同一失败签名且源码未变）、`6` 配置错误（缺工具、缺必填参数或多个候选）。
+
+### 资源与事实类工具（`scripts/` 下独立模块，同样有出口码契约）
+
+| 模块 | 作用 |
+|---|---|
+| `map_parse.py` | 读 GNU ld `.map`：按段汇总 flash/RAM 用量、对照 `Memory Configuration` 算占用率、列出最大符号；`--max-flash`/`--max-ram` 超预算退 1，`--write-baseline`/`--baseline` 检出增长回归 |
+| `svd_decode.py` | CMSIS-SVD + 寄存器 dump（或 `--values 0xADDR=0xVAL`）→ 具名位段与 `enumeratedValues` 含义；SVD 未定义的位显式标 `reserved`，地址越界退 4；`--find` 查寄存器/字段 |
+| `dbc_decode.py` | Vector DBC → candump 信号物理量（factor/offset/单位/`VAL_` 枚举/mux 分支）；Intel `@1` 与 Motorola `@0` 位序分别实现，未定义 ID 与 DLC 不符退 4 |
+| `rtt_capture.py` | SEGGER RTT：离线吃控制块 + 环形缓冲 dump（含 `WrOff < RdOff` 回绕），真机走 JLink（先 `--dry-run`）；`--expect` 未命中退 4 |
+| `size_gate.py` | 从 ELF 或保存的 `size -A` 转录算 text/data/bss；`--max-*` 超限退 1，`--write-baseline`/`--baseline` 做增长门禁（CI 无工具链可用 `--size-output-file`） |
+
+```bash
+python scripts/map_parse.py --map examples/map/demo.map --max-flash 64K
+python scripts/svd_decode.py --svd examples/svd/demo.svd --dump examples/svd/demo-dump.txt
+python scripts/dbc_decode.py --dbc examples/dbc/demo.dbc --log examples/dbc/demo-candump.log
+python scripts/rtt_capture.py --control-block-file examples/rtt/control-block.bin \
+  --buffer-file examples/rtt/buffer.bin --expect RTT_TEST_PASSED
+python scripts/size_gate.py --size-output-file examples/size/demo-size.txt --max-text 8K
+```
 
 `scripts/mcp_server.py` 把同一套 14 个工具经 stdio JSON-RPC 暴露给支持 MCP 的宿主（Claude Code、Codex、
 DSH 等），不再维护第二套命令；`--self-test` 可离线验证工具面与 JSON-RPC 契约。
@@ -269,6 +288,11 @@ skill-embedded-dev/
 |   |-- board_map.py            # 网表+ioc→主控引脚映射
 |   |-- project_memory.py       # 工程识别与证据化记忆
 |   |-- protocol_decode.py      # UART 规范解码 + ISO-TP/UDS/OBD-II/J1939
+|   |-- map_parse.py            # GNU ld .map → flash/RAM 用量、预算与增长门禁
+|   |-- svd_decode.py           # CMSIS-SVD + 寄存器 dump → 具名位段
+|   |-- dbc_decode.py           # Vector DBC → candump 信号物理量
+|   |-- rtt_capture.py          # SEGGER RTT 抓取（离线 dump / J-Link）
+|   |-- size_gate.py            # size -A 体积预算与基线回归门禁
 |   |-- mcp_server.py           # stdio MCP 服务（暴露同一套 14 个工具）
 |   |-- install.py              # 多平台一键安装/内容校验（dsh、codex 等）
 |   |-- report_schema.json      # 完成报告契约

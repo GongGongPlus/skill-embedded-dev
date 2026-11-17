@@ -293,15 +293,33 @@ def install_many(spec: str, force: bool, dry_run: bool, as_json: bool) -> int:
 
 
 def verify_targets(spec: str, as_json: bool) -> int:
+    """Verify installed copies. A host that was never installed is not a failure.
+
+    `--target all` covers every existing skill root, including ones the user has
+    deliberately not installed yet; treating those as INVALID would make the
+    command useless in its normal mode. Only a present-but-broken copy fails.
+    """
     rows = [host_status(host) for host in resolve_targets(spec)]
-    bad = [row for row in rows if not row["valid"]]
+    present = [row for row in rows if row["installed"]]
+    bad = [row for row in present if not row["valid"]]
+    absent = [row["host"] for row in rows if not row["installed"]]
     if as_json:
-        print(json.dumps({"valid": not bad, "hosts": rows}, ensure_ascii=False, indent=2))
+        print(
+            json.dumps(
+                {"valid": not bad, "hosts": rows, "not_installed": absent},
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
     else:
         for row in rows:
-            state = "OK" if row["valid"] else "INVALID: " + "; ".join(row["errors"])
             version = row["version"] or "-"
-            print(f"{row['host']:<16}{version:<9}{state}")
+            if not row["installed"]:
+                print(f"{row['host']:<16}{version:<9}not installed")
+            elif row["valid"]:
+                print(f"{row['host']:<16}{version:<9}OK")
+            else:
+                print(f"{row['host']:<16}{version:<9}INVALID: " + "; ".join(row["errors"]))
     return EXIT_OK if not bad else EXIT_INVALID
 
 

@@ -260,6 +260,101 @@ TOOLS: dict[str, dict] = {
         "json": True,
         "prefix": ["memory"],
     },
+    "map": {
+        "description": (
+            "Flash/RAM usage from a GNU ld map file, with optional budget and growth gates. "
+            "Exits 1 when over budget; an unrecognised map is a configuration error."
+        ),
+        "flags": {
+            "map": ("--map", "value"),
+            "top": ("--top", "value"),
+            "max_flash": ("--max-flash", "value"),
+            "max_ram": ("--max-ram", "value"),
+            "baseline": ("--baseline", "value"),
+            "write_baseline": ("--write-baseline", "value"),
+            "max_growth": ("--max-growth", "value"),
+            "output": ("--output", "value"),
+        },
+        "required": ["map"],
+        "json": True,
+        "ok_exit": [0, 1],
+        "prefix": ["map"],
+    },
+    "svd": {
+        "description": (
+            "Decode peripheral registers into named bitfields using a CMSIS-SVD file. Undefined bits "
+            "are reported as reserved; addresses outside every peripheral exit 4."
+        ),
+        "flags": {
+            "svd": ("--svd", "value"),
+            "dump": ("--dump", "value"),
+            "values": ("--values", "value"),
+            "peripheral": ("--peripheral", "value"),
+            "find": ("--find", "value"),
+            "output": ("--output", "value"),
+        },
+        "required": ["svd"],
+        "json": True,
+        "ok_exit": [0, 4],
+        "prefix": ["svd"],
+    },
+    "dbc": {
+        "description": (
+            "Decode candump frames into physical signal values using a Vector DBC file. Handles Intel "
+            "and Motorola bit order, mux branches and VAL_ enumerations."
+        ),
+        "flags": {
+            "dbc": ("--dbc", "value"),
+            "log": ("--log", "value"),
+            "hex": ("--hex", "value"),
+            "filter_id": ("--filter-id", "value"),
+            "output": ("--output", "value"),
+        },
+        "required": ["dbc"],
+        "json": True,
+        "ok_exit": [0, 4],
+        "prefix": ["dbc"],
+    },
+    "rtt": {
+        "description": (
+            "Capture a SEGGER RTT channel from a control-block dump or over J-Link. A missing token "
+            "exits 4; the live path needs a probe and should be dry-run first."
+        ),
+        "flags": {
+            "control_block_file": ("--control-block-file", "value"),
+            "buffer_file": ("--buffer-file", "value"),
+            "buffer_index": ("--buffer-index", "value"),
+            "jlink": ("--jlink", "value"),
+            "device": ("--device", "value"),
+            "control_block_address": ("--control-block-address", "value"),
+            "expect": ("--expect", "value"),
+            "dry_run": ("--dry-run", "bool"),
+            "output": ("--output", "value"),
+        },
+        "json": True,
+        "ok_exit": [0, 4],
+        "prefix": ["rtt"],
+    },
+    "size": {
+        "description": (
+            "Text/data/bss budget gate from an ELF or a saved `size -A` transcript, with baseline "
+            "growth detection. Exits 1 when over budget."
+        ),
+        "flags": {
+            "elf": ("--elf", "value"),
+            "size_output_file": ("--size-output-file", "value"),
+            "max_text": ("--max-text", "value"),
+            "max_data": ("--max-data", "value"),
+            "max_bss": ("--max-bss", "value"),
+            "baseline": ("--baseline", "value"),
+            "write_baseline": ("--write-baseline", "value"),
+            "max_growth": ("--max-growth", "value"),
+            "output": ("--output", "value"),
+        },
+        "json": True,
+        "ok_exit": [0, 1],
+        "prefix": ["size"],
+    },
 }
 
 
@@ -400,11 +495,16 @@ def self_test() -> int:
         "tune",
         "board",
         "memory",
+        "map",
+        "svd",
+        "dbc",
+        "rtt",
+        "size",
     ):
         if required not in names:
             failures.append(f"tool {required} missing from tools/list")
-    if len(listed) != 14:
-        failures.append(f"tools/list has {len(listed)} tools, expected 14")
+    if len(listed) != 19:
+        failures.append(f"tools/list has {len(listed)} tools, expected 19")
     env = call_tool("env", {})
     if env.get("isError"):
         failures.append("tools/call env failed: " + env["content"][0]["text"][:200])

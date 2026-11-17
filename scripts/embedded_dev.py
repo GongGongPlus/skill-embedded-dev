@@ -47,7 +47,7 @@ EXIT_CONFIG = 6
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
-VERSION_FALLBACK = "0.7.0"
+VERSION_FALLBACK = "0.8.0"
 
 
 def read_version() -> str:
@@ -1479,6 +1479,108 @@ def cmd_memory(args: argparse.Namespace) -> int:
     return _run_helper("project_memory", args.helper_args)
 
 
+def _forward(script_name: str, flag_pairs: list[tuple[str, object]], as_json: bool) -> int:
+    """Rebuild a sibling module's argv from parsed options and delegate.
+
+    The main CLI keeps its own option spelling; this adapter is the single place
+    that knows how a subcommand option maps onto the helper's flag, so the two
+    surfaces cannot drift into different semantics.
+    """
+    argv: list[str] = []
+    for flag, value in flag_pairs:
+        if value is None or value is False:
+            continue
+        if value is True:
+            argv.append(flag)
+        else:
+            argv.extend([flag, str(value)])
+    if as_json:
+        argv.append("--json")
+    return _run_helper(script_name, argv)
+
+
+def cmd_map(args: argparse.Namespace) -> int:
+    return _forward(
+        "map_parse",
+        [
+            ("--map", args.map_path),
+            ("--top", args.top),
+            ("--max-flash", args.max_flash),
+            ("--max-ram", args.max_ram),
+            ("--baseline", args.baseline),
+            ("--write-baseline", args.write_baseline),
+            ("--max-growth", args.max_growth if args.max_growth != "0" else None),
+            ("--output", args.output),
+        ],
+        args.json,
+    )
+
+
+def cmd_svd(args: argparse.Namespace) -> int:
+    return _forward(
+        "svd_decode",
+        [
+            ("--svd", args.svd),
+            ("--dump", args.dump),
+            ("--values", args.values),
+            ("--peripheral", args.peripheral),
+            ("--find", args.find),
+            ("--output", args.output),
+        ],
+        args.json,
+    )
+
+
+def cmd_dbc(args: argparse.Namespace) -> int:
+    return _forward(
+        "dbc_decode",
+        [
+            ("--dbc", args.dbc),
+            ("--log", args.log),
+            ("--hex", args.hex_data),
+            ("--filter-id", args.filter_id),
+            ("--output", args.output),
+        ],
+        args.json,
+    )
+
+
+def cmd_rtt(args: argparse.Namespace) -> int:
+    return _forward(
+        "rtt_capture",
+        [
+            ("--control-block-file", args.control_block_file),
+            ("--buffer-file", args.buffer_file),
+            ("--buffer-index", args.buffer_index if args.buffer_index != 0 else None),
+            ("--jlink", args.jlink),
+            ("--device", args.device),
+            ("--control-block-address", args.control_block_address),
+            ("--expect", args.expect),
+            ("--dry-run", args.dry_run),
+            ("--output", args.output),
+        ],
+        args.json,
+    )
+
+
+def cmd_size(args: argparse.Namespace) -> int:
+    return _forward(
+        "size_gate",
+        [
+            ("--elf", args.elf),
+            ("--size-output-file", args.size_output_file),
+            ("--max-text", args.max_text),
+            ("--max-data", args.max_data),
+            ("--max-bss", args.max_bss),
+            ("--baseline", args.baseline),
+            ("--write-baseline", args.write_baseline),
+            ("--max-growth", args.max_growth if args.max_growth != "0" else None),
+            ("--output", args.output),
+        ],
+        args.json,
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="embedded_dev.py",
@@ -1644,6 +1746,63 @@ def build_parser() -> argparse.ArgumentParser:
     )
     memory.add_argument("helper_args", nargs=argparse.REMAINDER, help="arguments for project_memory.py")
     memory.set_defaults(func=cmd_memory)
+
+    map_parser = sub.add_parser("map", help="flash/RAM usage from a GNU ld map file, with budget and growth gates")
+    map_parser.add_argument("--map", dest="map_path", required=True, help="GNU ld .map file")
+    map_parser.add_argument("--top", type=int, default=15, help="how many largest symbols to list (default 15)")
+    map_parser.add_argument("--max-flash", help="flash budget: 64K / 1M / 65536 / 0x10000")
+    map_parser.add_argument("--max-ram", help="RAM budget")
+    map_parser.add_argument("--baseline", help="baseline JSON from an earlier --write-baseline")
+    map_parser.add_argument("--write-baseline", help="write current usage as a baseline JSON")
+    map_parser.add_argument("--max-growth", default="0", help="allowed byte growth vs baseline (default 0)")
+    map_parser.add_argument("--output", help="also write the JSON report here")
+    map_parser.add_argument("--json", action="store_true")
+    map_parser.set_defaults(func=cmd_map)
+
+    svd_parser = sub.add_parser("svd", help="decode peripheral registers into named bitfields with a CMSIS-SVD file")
+    svd_parser.add_argument("--svd", required=True, help="CMSIS-SVD XML file")
+    svd_parser.add_argument("--dump", help="file of ADDRESS VALUE rows")
+    svd_parser.add_argument("--values", help="inline rows, e.g. '0x40021000=0x03020001'")
+    svd_parser.add_argument("--peripheral", help="restrict decoding to this peripheral")
+    svd_parser.add_argument("--find", help="search register and field names")
+    svd_parser.add_argument("--output", help="also write the JSON result here")
+    svd_parser.add_argument("--json", action="store_true")
+    svd_parser.set_defaults(func=cmd_svd)
+
+    dbc_parser = sub.add_parser("dbc", help="decode candump frames into physical signals using a Vector DBC file")
+    dbc_parser.add_argument("--dbc", required=True, help="Vector DBC file")
+    dbc_parser.add_argument("--log", help="candump log file")
+    dbc_parser.add_argument("--hex", dest="hex_data", help="inline frames, e.g. '7E0#0322F190'")
+    dbc_parser.add_argument("--filter-id", help="only decode this CAN ID (hex)")
+    dbc_parser.add_argument("--output", help="also write the JSON result here")
+    dbc_parser.add_argument("--json", action="store_true")
+    dbc_parser.set_defaults(func=cmd_dbc)
+
+    rtt_parser = sub.add_parser("rtt", help="capture a SEGGER RTT channel from a dump or over J-Link")
+    rtt_parser.add_argument("--control-block-file", help="offline: dump of SEGGER_RTT_CB")
+    rtt_parser.add_argument("--buffer-file", help="offline: dump of the ring buffer")
+    rtt_parser.add_argument("--buffer-index", type=int, default=0, help="up-buffer to read (default 0)")
+    rtt_parser.add_argument("--jlink", help="path to JLinkExe for the live path")
+    rtt_parser.add_argument("--device", help="J-Link device name")
+    rtt_parser.add_argument("--control-block-address", help="live: RTT control block address")
+    rtt_parser.add_argument("--expect", help="token that must appear in the captured text")
+    rtt_parser.add_argument("--dry-run", action="store_true", help="print the JLink script and exit")
+    rtt_parser.add_argument("--output", help="also write the JSON result here")
+    rtt_parser.add_argument("--json", action="store_true")
+    rtt_parser.set_defaults(func=cmd_rtt)
+
+    size_parser = sub.add_parser("size", help="text/data/bss budget gate with baseline growth detection")
+    size_parser.add_argument("--elf", help="ELF to measure with arm-none-eabi-size / size")
+    size_parser.add_argument("--size-output-file", help="offline: saved `size -A` transcript")
+    size_parser.add_argument("--max-text", help="text budget")
+    size_parser.add_argument("--max-data", help="data budget")
+    size_parser.add_argument("--max-bss", help="bss budget")
+    size_parser.add_argument("--baseline", help="baseline JSON from an earlier --write-baseline")
+    size_parser.add_argument("--write-baseline", help="write current sizes as a baseline JSON")
+    size_parser.add_argument("--max-growth", default="0", help="allowed byte growth per bucket (default 0)")
+    size_parser.add_argument("--output", help="also write the JSON result here")
+    size_parser.add_argument("--json", action="store_true")
+    size_parser.set_defaults(func=cmd_size)
 
     return parser
 

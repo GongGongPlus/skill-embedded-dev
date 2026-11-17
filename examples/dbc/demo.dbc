@@ -1,0 +1,34 @@
+VERSION ""
+
+NS_ :
+
+BS_:
+
+BU_: ECU DASH
+
+BO_ 416 ENGINE_STATUS: 8 ECU
+ SG_ EngineSpeed : 0|16@1+ (0.25,0) [0|16383.75] "rpm" DASH
+ SG_ EngineTemp : 16|8@1+ (1,-40) [-40|215] "degC" DASH
+ SG_ ThrottlePos : 24|8@1+ (0.392156,0) [0|100] "%" DASH
+
+BO_ 256 BODY_STATUS: 8 ECU
+ SG_ DoorState M : 0|4@1+ (1,0) [0|15] "" DASH
+ SG_ DoorFL m0 : 4|1@1+ (1,0) [0|1] "" DASH
+ SG_ DoorFR m0 : 5|1@1+ (1,0) [0|1] "" DASH
+ SG_ WindowPos m1 : 4|8@1+ (0.392156,0) [0|100] "%" DASH
+ SG_ BigEndianCounter : 23|16@0+ (1,0) [0|65535] "" DASH
+
+BO_ 512 GEARBOX: 8 ECU
+ SG_ GearRatio : 7|16@0+ (0.001,0) [0|65.535] "ratio" DASH
+ SG_ OilPressure : 23|16@0+ (0.1,0) [0|6553.5] "bar" DASH
+
+BO_TX_BU_ 416 : ECU,DASH;
+
+VAL_ 416 EngineTemp 0 "freezing" 90 "hot" ;
+VAL_ 256 DoorState 0 "all_closed" 1 "front_left_open" 2 "front_right_open" ;
+VAL_ 256 DoorFL 0 "closed" 1 "open" ;
+VAL_ 256 DoorFR 0 "closed" 1 "open" ;
+
+CM_ BO_ 416 "Powertrain status frame, 10 ms cycle.";
+CM_ SG_ 416 EngineSpeed "Crank speed, quarter-rpm resolution.";
+CM_ BO_ 256 "Body state, muxed by DoorState.";

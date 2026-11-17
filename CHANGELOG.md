@@ -7,6 +7,59 @@ All notable changes to this repository are documented here. The format follows
 Agent Skills are consumed by an LLM, so the version number also tells the agent
 whether it is looking at the same contract as an earlier session.
 
+## [0.8.0] - 2026-11-17
+
+Five resource- and fact-oriented tools. Each closes a gap between something the
+skill already promised in prose and something it could not actually execute.
+
+### Added
+
+- `scripts/map_parse.py` + `map` subcommand: GNU ld `.map` analysis. Per-section
+  totals, flash/RAM usage against the `Memory Configuration` table, the largest
+  symbols, `--max-flash`/`--max-ram` budget gates (exit 1), and
+  `--write-baseline`/`--baseline` growth regression detection. `references/memory-boot.md`
+  described three uses for a map file and nothing could read one.
+- `scripts/svd_decode.py` + `svd` subcommand: CMSIS-SVD decoding of peripheral
+  register dumps into named bitfields, with `enumeratedValues` meanings, explicit
+  `reserved` ranges for bits the SVD does not define, `--find` for definitions,
+  and exit 4 when an address falls outside every peripheral.
+- `scripts/dbc_decode.py` + `dbc` subcommand: Vector DBC parsing and candump
+  signal decoding. Intel `@1` and Motorola `@0` bit orders are implemented
+  separately, plus factor/offset scaling, `VAL_` enumerations, mux branch
+  selection, and exit 4 for unknown IDs or DLC mismatches.
+- `scripts/rtt_capture.py` + `rtt` subcommand: SEGGER RTT reads. Offline mode
+  parses a control block plus ring-buffer dump (including the `WrOff < RdOff`
+  wrap that a naive slice returns empty for); the live path drives JLinkExe with
+  a mandatory `--dry-run` preview.
+- `scripts/size_gate.py` + `size` subcommand: text/data/bss budgets from an ELF
+  or a saved `size -A` transcript, with baseline growth regression detection so
+  a build that stays under budget while quietly growing still fails.
+- Examples and fixtures: `examples/map/`, `examples/svd/`, `examples/dbc/`,
+  `examples/rtt/`, `examples/size/`, each with a walkthrough README and
+  hand-checkable numbers.
+- Tests: `test_map_parse.py` (33), `test_svd_decode.py` (32), `test_dbc_decode.py` (39),
+  `test_rtt_capture.py` (29), `test_size_gate.py` (25).
+
+### Changed
+
+- The MCP surface grew from 14 to 19 tools, and the main CLI from 14 to 19
+  subcommands; both forward to the same modules, so there is still one
+  implementation per capability.
+- New repository gate `test_no_orphan_scripts`: every file in `scripts/` must be
+  named in `SKILL.md`, named in `README.md`, referenced by a test, and expose
+  `main()`. It immediately caught four older modules (`board_map.py`,
+  `experiment.py`, `project_memory.py`, `protocol_decode.py`) that had never been
+  registered in `SKILL.md`.
+
+### Fixed
+
+- Intel/Motorola bit extraction: the first implementation accumulated both orders
+  with a left shift, which bit-reversed every Intel signal (byte 0 `0x12` decoded
+  as `0x48`). Both orders now have hand-computed tests pinning the expected
+  values, since the wrong answer here still looks plausible.
+- `rtt_capture.py` turns a missing JLink executable into a configuration error
+  instead of an uncaught `FileNotFoundError`.
+
 ## [0.7.0] - 2026-11-15
 
 ### Added

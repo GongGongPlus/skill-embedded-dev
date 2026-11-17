@@ -1,0 +1,56 @@
+Archive member included to satisfy reference by file (symbol)
+
+build/main.o                    build/stm32f103c8_startup.o (Reset_Handler)
+build/uart.o                    build/main.o (uart_init)
+
+Discarded input sections
+
+ .text          0x0000000000000000        0x0 build/startup.o
+ .text          0x0000000000000000        0x0 build/led.o
+
+Memory Configuration
+
+Name             Origin             Length             Attributes
+FLASH            0x08000000         0x00010000         xr
+RAM              0x20000000         0x00005000         xrw
+*default*        0x00000000         0xffffffff
+
+Linker script and memory map
+
+LOAD build/main.o
+                0x08000000                _sidata = LOADADDR (.data)
+
+.isr_vector     0x08000000       0x130
+ *(.isr_vector)
+ .isr_vector    0x08000000       0x130 build/startup.o
+                0x08000000                _sivector = .
+
+.text           0x08000130       0x9a4
+ *(.text*)
+ .text.Reset_Handler
+                0x08000130       0x4c build/startup.o
+                0x0800017c                _etext = .
+ .text.main     0x08000180       0x120 build/main.o
+ .text.uart_init
+                0x080002a0       0x88 build/uart.o
+ .text.printf   0x08000328       0x3c0 lib/libc_nano.a(lib_a-nano-printf.o)
+ *fill*         0x080006e8       0x8
+
+.rodata        0x080006f0       0x64
+ *(.rodata*)
+ .rodata.banner 0x080006f0       0x64 build/main.o
+
+.data           0x20000000       0x28
+                0x20000000                _sdata = .
+ *(.data*)
+ .data.tick     0x20000000       0x8 build/main.o
+ .data.uart_cfg 0x20000008       0x20 build/uart.o
+                0x20000028                _edata = .
+
+.bss            0x20000028       0x1d8
+                0x20000028                _sbss = .
+ *(.bss*)
+ .bss.rx_buf    0x20000028       0x100 build/uart.o
+ .bss.counters  0x20000128       0x40 build/main.o
+ COMMON         0x20000168       0x98 build/main.o
+                0x20000200                _ebss = .

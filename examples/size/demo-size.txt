@@ -1,0 +1,18 @@
+section            size      addr
+.isr_vector         304   134217728
+.text              2468   134218032
+.rodata             100   134220500
+.ARM.exidx            8   134220600
+.data                40   536870912
+.bss                472   536870952
+.heap              1024   536871424
+.stack             2048   536872448
+.debug_info       12345            0
+.debug_line        6789            0
+.debug_abbrev       456            0
+.debug_str         2345            0
+.symtab            1234            0
+.strtab             567            0
+.shstrtab           321            0
+.comment             42            0
+Total             23111

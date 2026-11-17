@@ -43,6 +43,11 @@ class TestToolSurface(unittest.TestCase):
                 "tune",
                 "board",
                 "memory",
+                "map",
+                "svd",
+                "dbc",
+                "rtt",
+                "size",
             },
         )
 

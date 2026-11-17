@@ -94,6 +94,34 @@ jobs:
           python scripts/install.py --list --json
           python scripts/install.py --target project --dry-run --json
 
+      - name: Resource and fact tools (map, svd, dbc, rtt, size)
+        shell: bash
+        run: |
+          set -e
+          python scripts/map_parse.py --map examples/map/demo.map --max-flash 64K --max-ram 20K --json
+          python scripts/svd_decode.py --svd examples/svd/demo.svd --values "0x40021018=0x00004005" --json
+          python scripts/size_gate.py --size-output-file examples/size/demo-size.txt --max-text 8K --json
+          python scripts/rtt_capture.py --control-block-file examples/rtt/control-block.bin \
+            --buffer-file examples/rtt/buffer.bin --expect RTT_TEST_PASSED --json
+          set +e
+          # Over-budget must fail loudly rather than pass quietly.
+          python scripts/map_parse.py --map examples/map/demo.map --max-flash 2K --json
+          code=$?
+          set -e
+          test "$code" -eq 1 || { echo "expected map budget exit 1, got $code"; exit 1; }
+          set +e
+          # An unknown CAN ID is ambiguity (4), not a silent skip.
+          python scripts/dbc_decode.py --dbc examples/dbc/demo.dbc \
+            --log examples/dbc/demo-candump.log --json
+          code=$?
+          set -e
+          test "$code" -eq 4 || { echo "expected dbc unknown-ID exit 4, got $code"; exit 1; }
+          set +e
+          python scripts/size_gate.py --size-output-file examples/size/demo-size.txt --max-text 2K
+          code=$?
+          set -e
+          test "$code" -eq 1 || { echo "expected size budget exit 1, got $code"; exit 1; }
+
       - name: Stack report and symbol resolution contracts
         shell: bash
         run: |

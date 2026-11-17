@@ -34,6 +34,15 @@ agent_created: true
 - 板级事实用 `board`：`board controller --netlist` 从 KiCad XML 网表推主控与每脚连接（串联 R/L/ferrite 穿透、电容仅在两信号网间桥接、电源/地排除、DNP 标注），`board from-ioc` 读 CubeMX 引脚角色与复用风险；多主控歧义退出 4 不猜，PDF 网表拒绝而不是猜。
 - 工程记忆用 `memory`：`detect` 识别工程与芯片、`init` 建 `.embedded-dev/` 档案、`remember/search/show/list/forget` 存取带证据等级的条目；`已确认` 必须给 `--source`，版本冲突退出 4，`forget` 留墓碑防止同名重建冒充旧结论。
 - 多平台安装：`python scripts/install.py --list` 逐个 host 做内容校验并显示版本漂移，`--target dsh,codex` 一条命令同步 DSH 与 Codex（`--target all` 覆盖所有已存在的 skill 根），`--verify-only --target all` 检查每一份副本。
+- 辅助模块分工（同在 `scripts/`，也可单独调用，但优先走上面的子命令以免出现第二套语义）：`board_map.py` 管网表与 `.ioc`、`experiment.py` 管控制环遥测、`project_memory.py` 管工程档案、`protocol_decode.py` 管 `embedded-protocol.v1` 规范校验与 UART/CAN 解码。
+
+### 资源与事实类工具（独立模块，各有出口码）
+
+- **容量核算用 `scripts/map_parse.py`**：读 GNU ld 的 `.map`，算 flash/RAM 用量并对照 `Memory Configuration` 给百分比；`--max-flash`/`--max-ram` 超预算退 1，`--write-baseline`/`--baseline` 检出"没超限但在长胖"的回归。认不出的文件退 6，绝不返回全零。
+- **外设寄存器解码用 `scripts/svd_decode.py`**：喂 CMSIS-SVD + 寄存器 dump（或 `--values 0xADDR=0xVAL`），把裸 hex 拆成具名位段并给出 `enumeratedValues` 含义；SVD 没定义的位显式标 `reserved`，地址落在所有外设之外报 unknown 并退 4。
+- **CAN 信号解码用 `scripts/dbc_decode.py`**：读 Vector DBC，把 candump 帧变成物理量（factor/offset/单位/`VAL_` 枚举/mux 分支）。Intel `@1` 与 Motorola `@0` 位序规则不同，混用会得到"看着合理但错"的数；未定义 ID 与 DLC 不符都退 4。诊断类流量仍用 `decode can`。
+- **RTT 抓取用 `scripts/rtt_capture.py`**：只有 SWD/JTAG 没有串口时读 SEGGER RTT。离线模式吃控制块 + 环形缓冲 dump（含 `WrOff < RdOff` 回绕）；真机模式驱动 JLink，必须先 `--dry-run` 看脚本。`--expect` 未命中退 4。
+- **体积门禁用 `scripts/size_gate.py`**：从 ELF 或保存的 `size -A` 转录算 text/data/bss，`--max-*` 超限退 1，`--write-baseline`/`--baseline` 做增长回归。CI 无工具链时用 `--size-output-file`。
 
 ## 铁律
 
